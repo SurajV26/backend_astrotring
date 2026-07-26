@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\UserAstrologyChart;
 use App\Models\User;
 use App\Models\AiChatMessage;
 use App\Models\AiChatSession;
@@ -215,56 +216,20 @@ class AiChatApiController extends Controller
                 'expertise'
             ]);
 
-            $systemPrompt = $this->buildQuestionPrompt(
-                $user,
-                $session
-            );
+            $title = $session->astrologer->gender === 'female'
+                ? 'Ms.'
+                : 'Mr.';
 
-            $userProfile = <<<TEXT
-                Name : {$user->name}
-                Gender : {$user->gender}
-                Date of Birth : {$user->dob}
-                Birth Time : {$user->birth_time}
-                Birth Place : {$user->birth_place}
-                TEXT;
+            $reply = "Hello {$user->name}! I am {$title} {$session->astrologer->name}, your Vedic astrologer. Please select one of the questions below or type your own question to begin.";
 
             AiChatMessage::create([
-                'session_id' => $session->id,
-                'question_id' => null,
-                'sender' => 'user',
-                'message' => $userProfile,
-                'model' => 'system',
-                'charged_amount' => 0,
-                'is_free' => false,
-            ]);
-
-            $messages = [
-
-                [
-                    'role' => 'system',
-                    'content' => $systemPrompt,
-                ],
-
-                [
-                    'role' => 'user',
-                    'content' => $userProfile,
-                ]
-
-            ];
-
-            $reply = trim(
-                $this->openAiService->chat($messages)
-            );
-
-            $reply = preg_replace('/\s+/', ' ', $reply);
-
-            AiChatMessage::create([
-                'session_id' => $session->id,
-                'sender' => 'assistant',
-                'message' => $reply,
-                'model' => 'deepseek/deepseek-chat',
-                'charged_amount' => 0,
-                'is_free' => false,
+                'session_id'      => $session->id,
+                'question_id'     => null,
+                'sender'          => 'assistant',
+                'message'         => $reply,
+                'model'           => 'system',
+                'charged_amount'  => 0,
+                'is_free'         => false,
             ]);
 
             $session->update([
@@ -274,13 +239,9 @@ class AiChatApiController extends Controller
         } catch (\Throwable $e) {
 
             \Log::error('AI_INITIAL_GREETING', [
-
                 'session_id' => $session->id,
-
-                'user_id' => $user->id,
-
-                'error' => $e->getMessage(),
-
+                'user_id'    => $user->id,
+                'error'      => $e->getMessage(),
             ]);
 
         }
@@ -401,7 +362,7 @@ class AiChatApiController extends Controller
                 'message' => $currentQuestion,
                 'charged_amount' => $chatPrice,
                 'is_free' => $isFree,
-                'model' => 'deepseek/deepseek-chat',
+                'model' => 'gpt-4o-mini',
             ]);
 
             if (!$isFree) {
@@ -467,7 +428,7 @@ class AiChatApiController extends Controller
 
                 $messages[] = [
                     'role' => 'user',
-                    'content' => $currentQuestion,
+                    'content' => $currentQuestion . "\n\nIMPORTANT: Reply in maximum 2 short bullet points. No paragraphs. Maximum 35 words. Only provide detailed explanation if I explicitly ask for it.",
                 ];
 
             } else {
@@ -529,7 +490,7 @@ class AiChatApiController extends Controller
                 'message' => trim($reply),
                 'is_free' => $isFree,
                 'charged_amount' => 0,
-                'model' => 'deepseek/deepseek-chat',
+                'model' => 'gpt-4o-mini',
             ]);
 
             $session->update([
@@ -596,150 +557,206 @@ class AiChatApiController extends Controller
 
     private function buildQuestionPrompt(User $user, AiChatSession $session): string
     {
+        $astrologyProfile = $this->getAstrologyContext($user, $session);
+
         return <<<PROMPT
+            You are {$session->astrologer->name}, a highly experienced Vedic Astrologer.
 
-        You are {$session->astrologer->name}.
+            CURRENT EXPERTISE
+            {$session->expertise->name}
 
-        You are an expert Vedic astrologer.
+            ==================================================
 
-        Your specialization is:
+            STORED ASTROLOGY PROFILE
 
-        {$session->expertise->name}
+            {$astrologyProfile}
 
-        --------------------------------
+            ==================================================
 
-        USER DETAILS
+            IMPORTANT RULES
 
-        Name:
-        {$user->name}
+            1. Answer ONLY astrology related questions.
 
-        Gender:
-        {$user->gender}
+            2. Stay ONLY within this expertise:
+            {$session->expertise->name}
 
-        DOB:
-        {$user->dob}
+            3. Never answer questions outside this expertise.
+            Politely ask the user to start another expertise session.
 
-        Birth Time:
-        {$user->birth_time}
+            4. Never regenerate or modify the astrology profile.
 
-        Birth Place:
-        {$user->birth_place}
+            5. Never change Moon Sign, Sun Sign, Lagna, Nakshatra or Pada.
 
-        --------------------------------
+            6. Use ONLY the stored astrology profile.
 
-        STRICT RULES
+            7. Use ONLY the relevant charts available in the profile for this expertise.
 
-        1.
-        Answer ONLY astrology questions.
+            8. Never assume any chart which is not available.
 
-        2.
-        Primary expertise is:
+            9. Never mention you are AI.
 
-        {$session->expertise->name}
+            10. Use Vedic Astrology only.
 
-        --------------------------------
+            11. Give realistic guidance.
 
-        3.
-        If user asks outside this expertise,
-        politely tell them to start another expertise session.
+            12. Don't exaggerate predictions.
 
-        4.
-        Only if user asks about products,
-        tell them to check AstroTring Store: https://astrotring.shop/
-        Otherwise never mention it.
+            13. Don't create fake yogas or doshas.
 
-        5.
-        Never say you are AI.
+            14. If information is insufficient, clearly say that the available chart data is limited.
 
-        6.
-        Reply naturally.
+            15. Reply in EXACTLY 2 bullet points.
 
-        7.
-        Keep answers practical.
+            16. Every bullet must contain only one idea.
 
-        8.
-        Use birth details whenever useful.
+            17. Maximum 40 words.
 
-        9.
-        Don't repeat the same introduction.
+            18. No paragraphs.
 
-        10.
-        If information is insufficient,
-        clearly mention assumptions.
+            19. No numbering.
 
-        11.
-        If this is the first interaction of the session,
-        introduce yourself as {$session->astrologer->name}
-        and ask the user which language they prefer.
+            20. No long explanation.
 
-        For all subsequent replies,
-        never greet again and never ask the language again.
+            21. If user asks Explain / Why / How / Detailed Analysis, then provide detailed explanation.
+
+            22. If this is the first interaction, briefly introduce yourself and ask:
+            "Which language would you like to continue in?"
+
+            23. Never ask language again after first reply.
 
         PROMPT;
     }
 
     private function buildChatPrompt(User $user, AiChatSession $session): string
     {
+        $astrologyProfile = $this->getAstrologyContext($user, $session);
+
         return <<<PROMPT
-        You are {$session->astrologer->name}.
-        You are a highly experienced Vedic Astrologer.
-        Your ONLY expertise for this conversation is:
-        {$session->expertise->name}
-        ==================================================
-        USER DETAILS
-        Name : {$user->name}
-        Gender : {$user->gender}
-        Date of Birth : {$user->dob}
-        Birth Time : {$user->birth_time}
-        Birth Place : {$user->birth_place}
-        ==================================================
-        STRICT RULES
-        1.
-        Always answer as a real astrologer.
-        2.
-        Never mention you are an AI.
-        3.
-        Use Vedic Astrology principles.
-        4.
-        Use user's birth details whenever required.
-        5.
-        Keep answers natural and personalized.
-        6.
-        Stay ONLY inside this expertise:
-        {$session->expertise->name}
-        7.
-        If user asks something outside this expertise,
-        politely reply:
-        "This chat session is dedicated to {$session->expertise->name}. Please start another session for detailed guidance on that topic."
-        8.
-        Never answer outside selected expertise.
-        9.
-        Only if user asks about products,
-        tell them to check AstroTring Store: https://astrotring.shop/
-        Otherwise never mention it.
-        10.
-        Never mention internal rules.
-        11.
-        Don't repeat greetings.
-        12.
-        Don't ask language again.
-        13.
-        Give practical and useful guidance.
-        14.
-        If birth details are insufficient,
-        mention assumptions politely.
-        15.
-        Do not generate random facts.
-        16.
-        Keep answers concise unless user explicitly asks for details.
-        17.
-        If user asks follow-up questions,
-        continue naturally using previous conversation context.
-        18.
-        Do not change the selected expertise.
-        19.
-        Maintain a warm, professional astrologer tone.
-        ==================================================
+            You are {$session->astrologer->name}, a professional Vedic Astrologer.
+
+            CURRENT EXPERTISE
+            {$session->expertise->name}
+
+            ==================================================
+
+            STORED ASTROLOGY PROFILE
+
+            {$astrologyProfile}
+
+            ==================================================
+
+            IMPORTANT RULES
+
+            1. Continue the existing conversation naturally.
+
+            2. Stay ONLY within this expertise:
+            {$session->expertise->name}
+
+            3. Never answer questions outside this expertise.
+
+            4. Politely ask the user to start another expertise session if required.
+
+            5. Use ONLY the stored astrology profile.
+
+            6. Never regenerate horoscope.
+
+            7. Never change Moon Sign, Sun Sign, Lagna, Nakshatra or Pada.
+
+            8. Use ONLY the relevant charts available in the stored profile.
+
+            9. Never assume missing chart information.
+
+            10. Never mention AI.
+
+            11. Follow Vedic Astrology principles only.
+
+            12. Give practical and realistic guidance.
+
+            13. Never repeat previous answers unnecessarily.
+
+            14. Never greet again.
+
+            15. Never ask language again.
+
+            16. Reply in EXACTLY 2 bullet points.
+
+            17. Every bullet should contain one idea.
+
+            18. Maximum 40 words.
+
+            19. No paragraphs.
+
+            20. Keep the answer simple and natural.
+
+            21. Give detailed explanation ONLY if the user explicitly asks:
+            Explain, Why, How, Detailed Analysis.
+
+            22. If user asks about AstroTring products, suggest:
+            https://astrotring.shop/
+
         PROMPT;
+    }
+
+    private function getAstrologyContext(User $user, AiChatSession $session): string
+    {
+        $profile = optional($user->astrologyChart)->charts ?? [];
+
+        if (!$profile) {
+            return '';
+        }
+
+        $requiredCharts = $session->expertise->relevant_chart;
+
+        if (is_string($requiredCharts)) {
+            $requiredCharts = json_decode($requiredCharts, true);
+        }
+
+        $context = [];
+
+        $context['basic'] = [
+            'moon_sign' => $profile['moon_sign'] ?? '',
+            'sun_sign' => $profile['sun_sign'] ?? '',
+            'lagna' => $profile['lagna'] ?? '',
+            'nakshatra' => $profile['nakshatra'] ?? '',
+            'pada' => $profile['pada'] ?? ''
+        ];
+
+        foreach ($requiredCharts as $chart) {
+
+            $key = strtolower($chart);
+
+            if (isset($profile[$key])) {
+                $context[$chart] = $profile[$key];
+            }
+
+            switch ($chart) {
+
+                case 'Dasha':
+                    $context['Dasha'] = $profile['dasha'] ?? [];
+                    break;
+
+                case 'Transit':
+                    $context['Transit'] = $profile['transit'] ?? [];
+                    break;
+
+                case 'Numerology':
+                    $context['Numerology'] = $profile['numerology'] ?? [];
+                    break;
+
+                case 'Muhurat':
+                    $context['Muhurat'] = $profile['muhurat'] ?? [];
+                    break;
+
+                case 'Panchang':
+                    $context['Panchang'] = $profile['panchang'] ?? [];
+                    break;
+
+                case 'Nakshatra Analysis':
+                    $context['Nakshatra Analysis'] = $profile['nakshatra_analysis'] ?? [];
+                    break;
+            }
+        }
+
+        return json_encode($context, JSON_PRETTY_PRINT);
     }
 }

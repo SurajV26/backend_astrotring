@@ -209,6 +209,11 @@ class User extends Authenticatable
         return $this->hasMany(AiChatTransaction::class, 'user_id');
     } 
 
+    public function astrologyChart()
+    {
+        return $this->hasOne(UserAstrologyChart::class);
+    }
+
     /* =====================================================
         ASTROLOGER / CLIENT RELATED
     ===================================================== */
