@@ -461,8 +461,16 @@ class AstrologerApiController extends Controller
 
             'gender' => 'nullable|in:male,female,other',
             'dob' => 'nullable|date',
-            'birth_time' => 'nullable|string|max:10',
-            'birth_place' => 'nullable|string|max:255',
+            'birth_time' => 'nullable|regex:/^\d{2}:\d{2}(:\d{2})?$/',
+            'birth_place' => 'nullable|array',
+            'birth_place.displayName' => 'nullable|string',
+            'birth_place.place' => 'nullable|string',
+            'birth_place.country' => 'nullable|string',
+            'birth_place.state' => 'nullable|string',
+            'birth_place.latitude' => 'nullable|numeric',
+            'birth_place.longitude' => 'nullable|numeric',
+            'birth_place.timezone' => 'nullable|numeric',
+            'birth_place.elevation' => 'nullable|numeric',
 
             'experience' => 'nullable|integer|min:0',
             'daily_available_hours' => 'nullable|integer|min:1|max:24',

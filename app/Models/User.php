@@ -100,6 +100,7 @@ class User extends Authenticatable
         'status' => 'boolean',
         'kyc_status' => 'boolean',
         'dob' => 'date',
+        'birth_place' => 'array',
         'date_of_joining' => 'date',
         'last_seen_at' => 'datetime',
         'is_online' => 'boolean',

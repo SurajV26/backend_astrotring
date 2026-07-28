@@ -105,8 +105,15 @@
                                     <div class="col-lg-4">
                                         <div class="form-group">
                                             <label class="form-label fw-bold">Birth Place :</label>
-                                            <input type="text" name="birth_place" class="form-control"
-                                                placeholder="Enter Birth Place">
+
+                                            <input type="text" id="birth_place_search" class="form-control"
+                                                placeholder="Search Birth Place..." autocomplete="off">
+
+                                            <input type="hidden" id="birth_place" name="birth_place">
+
+                                            <div id="birthPlaceList" class="list-group position-absolute w-100 shadow"
+                                                style="z-index:9999;display:none;max-height:250px;overflow-y:auto;">
+                                            </div>
                                         </div>
                                     </div>
 
@@ -245,6 +252,7 @@
 @endsection
 
 @section('script')
+    <script src="{{ asset('js/countryCodes.js') }}"></script>
     <script>
         $(function() {
 
@@ -281,33 +289,108 @@
         });
     </script>
     <script>
-        fetch('https://restcountries.com/v3.1/all?fields=name,idd,cca2')
-            .then(response => response.json())
-            .then(data => {
-                const select = document.getElementById('country_code');
-                select.innerHTML = '';
+        document.addEventListener('DOMContentLoaded', function() {
 
-                data.forEach(country => {
-                    if (country.idd && country.idd.root && country.idd.suffixes) {
-                        country.idd.suffixes.forEach(suffix => {
-                            const code = country.idd.root + suffix;
+            const select = document.getElementById('country_code');
+            select.innerHTML = '';
 
-                            const option = document.createElement('option');
-                            option.value = code;
-                            option.textContent = `${code} (${country.cca2})`;
+            COUNTRY_CODES
+                .sort((a, b) => a.country.localeCompare(b.country))
+                .forEach(item => {
 
-                            // India default
-                            if (code === '+91') {
-                                option.selected = true;
+                    const option = document.createElement('option');
+
+                    option.value = item.value;
+                    option.textContent = item.label;
+
+                    if (item.value === '+91') {
+                        option.selected = true;
+                    }
+
+                    select.appendChild(option);
+                });
+
+        });
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+
+            const searchInput = document.getElementById('birth_place_search');
+            const hiddenInput = document.getElementById('birth_place');
+            const resultBox = document.getElementById('birthPlaceList');
+
+            let timer;
+
+            searchInput.addEventListener('input', function() {
+
+                clearTimeout(timer);
+
+                const keyword = this.value.trim();
+
+                if (keyword.length < 2) {
+                    resultBox.innerHTML = '';
+                    resultBox.style.display = 'none';
+                    return;
+                }
+
+                timer = setTimeout(function() {
+
+                    fetch(
+                            `https://jagannatha-hora-359167915530.europe-west1.run.app/location/autocomplete?q=${encodeURIComponent(keyword)}`
+                            )
+                        .then(res => res.json())
+                        .then(data => {
+
+                            resultBox.innerHTML = '';
+
+                            if (!data.results || data.results.length === 0) {
+                                resultBox.style.display = 'none';
+                                return;
                             }
 
-                            select.appendChild(option);
+                            data.results.forEach(place => {
+
+                                const item = document.createElement('a');
+
+                                item.href = "javascript:void(0)";
+                                item.className =
+                                    "list-group-item list-group-item-action";
+                                item.textContent = place.displayName;
+
+                                item.onclick = function() {
+
+                                    searchInput.value = place.displayName;
+
+                                    // hidden field me pura JSON
+                                    hiddenInput.value = JSON.stringify(place);
+
+                                    resultBox.style.display = "none";
+                                };
+
+                                resultBox.appendChild(item);
+
+                            });
+
+                            resultBox.style.display = "block";
+
+                        })
+                        .catch(error => {
+                            console.error(error);
+                            resultBox.style.display = "none";
                         });
-                    }
-                });
-            })
-            .catch(error => {
-                console.error('Country code API error:', error);
+
+                }, 300);
+
             });
+
+            document.addEventListener('click', function(e) {
+
+                if (!resultBox.contains(e.target) && e.target !== searchInput) {
+                    resultBox.style.display = 'none';
+                }
+
+            });
+
+        });
     </script>
 @endsection

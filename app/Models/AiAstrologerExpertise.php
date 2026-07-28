@@ -15,10 +15,12 @@ class AiAstrologerExpertise extends Model
         'ai_astrologer_id',
         'name',
         'slug',
+        'relevant_chart',
         'status'
     ];
 
     protected $casts = [
+        'relevant_chart' => 'array',
         'status' => 'boolean',
     ];
 

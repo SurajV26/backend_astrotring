@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Hash;
 use Intervention\Image\Facades\Image;
 use App\Models\CallSession;
 use App\Models\ChatSession;
+use App\Services\AstrologyChartService;
 use App\Models\AiChatSession;
 use App\Models\AiChatMessage;
 use App\Models\AiChatTransaction;
@@ -31,7 +32,15 @@ class UserApiController extends Controller
             'terms_accepted' => 'required|in:0,1',
             'dob' => 'nullable|date',
             'birth_time' => 'nullable|regex:/^\d{2}:\d{2}(:\d{2})?$/',
-            'birth_place' => 'nullable|string|max:255',
+            'birth_place' => 'nullable|array',
+            'birth_place.displayName' => 'nullable|string',
+            'birth_place.place' => 'nullable|string',
+            'birth_place.country' => 'nullable|string',
+            'birth_place.state' => 'nullable|string',
+            'birth_place.latitude' => 'nullable|numeric',
+            'birth_place.longitude' => 'nullable|numeric',
+            'birth_place.timezone' => 'nullable|numeric',
+            'birth_place.elevation' => 'nullable|numeric',
             'gender' => 'nullable|in:male,female,other',
             'marital_status' => 'nullable|string|max:100',
             'occupation' => 'nullable|string|max:255',
@@ -110,6 +119,23 @@ class UserApiController extends Controller
                 'total_added' => 0,
                 'total_spent' => 0,
             ]);
+
+            try {
+
+                app(\App\Services\AstrologyChartService::class)
+                    ->generate($user);
+
+            } catch (\Throwable $e) {
+
+                \Log::error('Astrology Generation Failed', [
+
+                    'user_id' => $user->id,
+
+                    'message' => $e->getMessage()
+
+                ]);
+
+            }
 
             DB::commit();
 
@@ -561,7 +587,15 @@ class UserApiController extends Controller
             'occupation' => 'nullable|string|max:255',
 
             'birth_time' => 'nullable|regex:/^\d{2}:\d{2}(:\d{2})?$/',
-            'birth_place' => 'nullable|string|max:255',
+            'birth_place' => 'nullable|array',
+            'birth_place.displayName' => 'nullable|string',
+            'birth_place.place' => 'nullable|string',
+            'birth_place.country' => 'nullable|string',
+            'birth_place.state' => 'nullable|string',
+            'birth_place.latitude' => 'nullable|numeric',
+            'birth_place.longitude' => 'nullable|numeric',
+            'birth_place.timezone' => 'nullable|numeric',
+            'birth_place.elevation' => 'nullable|numeric',
 
             'about' => 'nullable|string|max:2000',
             'address' => 'nullable|string|max:2000',
@@ -624,6 +658,23 @@ class UserApiController extends Controller
 
             $user->modified_by = $user->id;
             $user->save();
+
+            try {
+
+                app(\App\Services\AstrologyChartService::class)
+                    ->generate($user);
+
+            } catch (\Throwable $e) {
+
+                \Log::error('Astrology Regeneration Failed', [
+
+                    'user_id' => $user->id,
+
+                    'message' => $e->getMessage()
+
+                ]);
+
+            }
 
             if ($request->filled('astrologer_id') && $request->filled('rating')) {
 
