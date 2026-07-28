@@ -84,11 +84,11 @@
                                         </div>
                                     </div>
                                     <!-- <div class="col-lg-4">
-                                                                <div class="form-group">
-                                                                    <label class="form-label fw-bold">Date Of Joining</label>
-                                                                    <input type="date" name="date_of_joining" class="form-control">
-                                                                </div>
-                                                            </div> -->
+                                                                    <div class="form-group">
+                                                                        <label class="form-label fw-bold">Date Of Joining</label>
+                                                                        <input type="date" name="date_of_joining" class="form-control">
+                                                                    </div>
+                                                                </div> -->
                                     <div class="col-lg-6">
                                         <div class="form-group">
                                             <label class="form-label fw-bold">Date Of Birth</label>
@@ -401,6 +401,7 @@
 @endsection
 
 @section('script')
+    <script src="{{ asset('js/countryCodes.js') }}"></script>
     <script type="text/javascript">
         $(document).ready(function() {
 
@@ -444,33 +445,27 @@
         });
     </script>
     <script>
-        fetch('https://restcountries.com/v3.1/all?fields=name,idd,cca2')
-            .then(response => response.json())
-            .then(data => {
-                const select = document.getElementById('country_code');
-                select.innerHTML = '';
+        document.addEventListener('DOMContentLoaded', function() {
 
-                data.forEach(country => {
-                    if (country.idd && country.idd.root && country.idd.suffixes) {
-                        country.idd.suffixes.forEach(suffix => {
-                            const code = country.idd.root + suffix;
+            const select = document.getElementById('country_code');
+            select.innerHTML = '';
 
-                            const option = document.createElement('option');
-                            option.value = code;
-                            option.textContent = `${code} (${country.cca2})`;
+            COUNTRY_CODES
+                .sort((a, b) => a.country.localeCompare(b.country))
+                .forEach(item => {
 
-                            // India default
-                            if (code === '+91') {
-                                option.selected = true;
-                            }
+                    const option = document.createElement('option');
 
-                            select.appendChild(option);
-                        });
+                    option.value = item.value;
+                    option.textContent = item.label;
+
+                    if (item.value === '+91') {
+                        option.selected = true;
                     }
+
+                    select.appendChild(option);
                 });
-            })
-            .catch(error => {
-                console.error('Country code API error:', error);
-            });
+
+        });
     </script>
 @endsection

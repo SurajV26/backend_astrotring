@@ -59,4 +59,8 @@ return [
         'free_messages' => env('AI_CHAT_FREE_MESSAGES', 3),
     ],
 
+    'jhora' => [
+        'base_url' => env('JHORA_BASE_URL'),
+    ],
+
 ];

@@ -90,13 +90,13 @@
                                         </div>
                                     </div>
                                     <!-- <div class="col-lg-4">
-                                            <div class="form-group">
-                                                <label for="date_of_joining" class="form-label fw-bold">Date Of Joining
-                                                    :</label>
-                                                <input type="date" name="date_of_joining" class="form-control"
-                                                    value="{{ $astro->date_of_joining ? \Carbon\Carbon::parse($astro->date_of_joining)->format('Y-m-d') : '' }}">
-                                            </div>
-                                        </div> -->
+                                                <div class="form-group">
+                                                    <label for="date_of_joining" class="form-label fw-bold">Date Of Joining
+                                                        :</label>
+                                                    <input type="date" name="date_of_joining" class="form-control"
+                                                        value="{{ $astro->date_of_joining ? \Carbon\Carbon::parse($astro->date_of_joining)->format('Y-m-d') : '' }}">
+                                                </div>
+                                            </div> -->
                                     <div class="col-lg-6">
                                         <div class="form-group">
                                             <label for="dob" class="form-label fw-bold">Date Of Birth :</label>
@@ -119,25 +119,25 @@
                                                 <option value=""></option>
 
                                                 @foreach ([
-                                                    'signature_reading' => 'Signature Reading',
-                                                    'vedic' => 'Vedic',
-                                                    'tarot' => 'Tarot',
-                                                    'kp' => 'KP',
-                                                    'numerology' => 'Numerology',
-                                                    'lal_kitab' => 'Lal Kitab',
-                                                    'psychic' => 'Psychic',
-                                                    'palmistry' => 'Palmistry',
-                                                    'cartomancy' => 'Cartomancy',
-                                                    'prashana' => 'Prashana',
-                                                    'loshu_grid' => 'Loshu Grid',
-                                                    'nadi' => 'Nadi',
-                                                    'face_reading' => 'Face Reading',
-                                                    'horary' => 'Horary',
-                                                    'life_coach' => 'Life Coach',
-                                                    'western' => 'Western',
-                                                    'gemology' => 'Gemology',
-                                                    'vastu' => 'Vastu',
-                                                ] as $key => $label)
+            'signature_reading' => 'Signature Reading',
+            'vedic' => 'Vedic',
+            'tarot' => 'Tarot',
+            'kp' => 'KP',
+            'numerology' => 'Numerology',
+            'lal_kitab' => 'Lal Kitab',
+            'psychic' => 'Psychic',
+            'palmistry' => 'Palmistry',
+            'cartomancy' => 'Cartomancy',
+            'prashana' => 'Prashana',
+            'loshu_grid' => 'Loshu Grid',
+            'nadi' => 'Nadi',
+            'face_reading' => 'Face Reading',
+            'horary' => 'Horary',
+            'life_coach' => 'Life Coach',
+            'western' => 'Western',
+            'gemology' => 'Gemology',
+            'vastu' => 'Vastu',
+        ] as $key => $label)
                                                     <option value="{{ $key }}"
                                                         {{ in_array($key, $selectedExpertise) ? 'selected' : '' }}>
                                                         {{ $label }}
@@ -162,17 +162,17 @@
                                                 <option value=""></option>
 
                                                 @foreach ([
-                                                    'love' => 'Love',
-                                                    'marriage' => 'Marriage',
-                                                    'health' => 'Health',
-                                                    'wealth' => 'Wealth',
-                                                    'education' => 'Education',
-                                                    'career' => 'Career',
-                                                    'legal' => 'Legal',
-                                                    'remedies' => 'Remedies',
-                                                    'finance' => 'Finance',
-                                                    'parents' => 'Parents',
-                                                ] as $key => $label)
+            'love' => 'Love',
+            'marriage' => 'Marriage',
+            'health' => 'Health',
+            'wealth' => 'Wealth',
+            'education' => 'Education',
+            'career' => 'Career',
+            'legal' => 'Legal',
+            'remedies' => 'Remedies',
+            'finance' => 'Finance',
+            'parents' => 'Parents',
+        ] as $key => $label)
                                                     <option value="{{ $key }}"
                                                         {{ in_array($key, $selectedCategories) ? 'selected' : '' }}>
                                                         {{ $label }}
@@ -196,12 +196,12 @@
                                                 data-placeholder="Select Astro Education">
 
                                                 @foreach ([
-                                                    'self_learned' => 'Self Learned',
-                                                    'diploma' => 'Diploma in Astrology',
-                                                    'certified' => 'Certified Astrologer',
-                                                    'acharya' => 'Acharya in Astrology',
-                                                    'phd' => 'PhD in Astrology',
-                                                ] as $key => $label)
+            'self_learned' => 'Self Learned',
+            'diploma' => 'Diploma in Astrology',
+            'certified' => 'Certified Astrologer',
+            'acharya' => 'Acharya in Astrology',
+            'phd' => 'PhD in Astrology',
+        ] as $key => $label)
                                                     <option value="{{ $key }}"
                                                         {{ in_array($key, $selectedEducation ?? []) ? 'selected' : '' }}>
                                                         {{ $label }}
@@ -226,36 +226,36 @@
                                                 <option value=""></option>
 
                                                 @foreach ([
-                                                    'english' => 'English',
-                                                    'hindi' => 'Hindi',
-                                                    'tamil' => 'Tamil',
-                                                    'punjabi' => 'Punjabi',
-                                                    'marathi' => 'Marathi',
-                                                    'gujarati' => 'Gujarati',
-                                                    'bengali' => 'Bengali',
-                                                    'french' => 'French',
-                                                    'odia' => 'Odia',
-                                                    'telugu' => 'Telugu',
-                                                    'kannada' => 'Kannada',
-                                                    'malayalam' => 'Malayalam',
-                                                    'sanskrit' => 'Sanskrit',
-                                                    'assamese' => 'Assamese',
-                                                    'german' => 'German',
-                                                    'spanish' => 'Spanish',
-                                                    'marwari' => 'Marwari',
-                                                    'manipuri' => 'Manipuri',
-                                                    'urdu' => 'Urdu',
-                                                    'sindhi' => 'Sindhi',
-                                                    'kashmiri' => 'Kashmiri',
-                                                    'bodo' => 'Bodo',
-                                                    'nepali' => 'Nepali',
-                                                    'konkani' => 'Konkani',
-                                                    'maithili' => 'Maithili',
-                                                    'arabic' => 'Arabic',
-                                                    'bhojpuri' => 'Bhojpuri',
-                                                    'dutch' => 'Dutch',
-                                                    'rajasthani' => 'Rajasthani',
-                                                ] as $key => $label)
+            'english' => 'English',
+            'hindi' => 'Hindi',
+            'tamil' => 'Tamil',
+            'punjabi' => 'Punjabi',
+            'marathi' => 'Marathi',
+            'gujarati' => 'Gujarati',
+            'bengali' => 'Bengali',
+            'french' => 'French',
+            'odia' => 'Odia',
+            'telugu' => 'Telugu',
+            'kannada' => 'Kannada',
+            'malayalam' => 'Malayalam',
+            'sanskrit' => 'Sanskrit',
+            'assamese' => 'Assamese',
+            'german' => 'German',
+            'spanish' => 'Spanish',
+            'marwari' => 'Marwari',
+            'manipuri' => 'Manipuri',
+            'urdu' => 'Urdu',
+            'sindhi' => 'Sindhi',
+            'kashmiri' => 'Kashmiri',
+            'bodo' => 'Bodo',
+            'nepali' => 'Nepali',
+            'konkani' => 'Konkani',
+            'maithili' => 'Maithili',
+            'arabic' => 'Arabic',
+            'bhojpuri' => 'Bhojpuri',
+            'dutch' => 'Dutch',
+            'rajasthani' => 'Rajasthani',
+        ] as $key => $label)
                                                     <option value="{{ $key }}"
                                                         {{ in_array($key, $selectedLanguages) ? 'selected' : '' }}>
                                                         {{ $label }}
@@ -504,6 +504,7 @@
 @endsection
 
 @section('script')
+    <script src="{{ asset('js/countryCodes.js') }}"></script>
     <script type="text/javascript">
         $(function() {
             // Handle Form Update Submission
@@ -559,35 +560,29 @@
         });
     </script>
     <script>
-        fetch('https://restcountries.com/v3.1/all?fields=name,idd,cca2')
-            .then(response => response.json())
-            .then(data => {
-                const select = document.getElementById('country_code');
-                select.innerHTML = '';
+        document.addEventListener('DOMContentLoaded', function() {
 
-                const astroCountryCode = "{{ $astro->country_code }}";
+            const select = document.getElementById('country_code');
+            const astroCountryCode = "{{ $astro->country_code }}";
 
-                data.forEach(country => {
-                    if (country.idd && country.idd.root && country.idd.suffixes) {
-                        country.idd.suffixes.forEach(suffix => {
-                            const code = country.idd.root + suffix;
+            select.innerHTML = '';
 
-                            const option = document.createElement('option');
-                            option.value = code;
-                            option.textContent = `${code} (${country.cca2})`;
+            COUNTRY_CODES
+                .sort((a, b) => a.country.localeCompare(b.country))
+                .forEach(item => {
 
-                            // ✅ Existing astro's country pre-selected
-                            if (code === astroCountryCode) {
-                                option.selected = true;
-                            }
+                    const option = document.createElement('option');
 
-                            select.appendChild(option);
-                        });
+                    option.value = item.value;
+                    option.textContent = item.label;
+
+                     if (item.value === astroCountryCode) {
+                        option.selected = true;
                     }
+
+                    select.appendChild(option);
                 });
-            })
-            .catch(error => {
-                console.error('Country code API error:', error);
-            });
+
+        });
     </script>
 @endsection

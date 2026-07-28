@@ -45,12 +45,7 @@ class AstroController extends AdminController
 
     public function getCreate(Request $request)
     {
-        $countries = \App\Models\Country::all();
-        $states = \App\Models\State::all();
-        $cities = \App\Models\City::all();
-        $pin_codes = \App\Models\PinCode::all();
-
-        return view('admin.astrologers.create', compact('cities', 'states', 'countries', 'pin_codes'));
+        return view('admin.astrologers.create');
     }
 
     public function postCreate(Request $request)
@@ -174,12 +169,7 @@ class AstroController extends AdminController
             }
         ])->findOrFail($request->id);
 
-        $countries = \App\Models\Country::all();
-        $states = \App\Models\State::where('country_id', $astro->country_id)->get();
-        $cities = \App\Models\City::where('state_id', $astro->state_id)->get();
-        $pin_codes = \App\Models\PinCode::where('city_id', $astro->city_id)->get();
-
-        return view('admin.astrologers.update', compact('astro', 'cities', 'states', 'countries', 'pin_codes'));
+        return view('admin.astrologers.update', compact('astro'));
     }
 
     public function postUpdate(Request $request)

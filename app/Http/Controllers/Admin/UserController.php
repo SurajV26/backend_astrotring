@@ -60,7 +60,7 @@ class UserController extends AdminController
 
             "dob"         => "nullable|date",
             "birth_time"  => "nullable",
-            "birth_place" => "nullable|string",
+            "birth_place" => "nullable|json",
             "gender"      => "nullable|in:male,female,other",
 
             "pincode" => "nullable|string|max:10",
@@ -92,7 +92,9 @@ class UserController extends AdminController
 
         $user->dob         = $request->dob;
         $user->birth_time  = $request->birth_time;
-        $user->birth_place = $request->birth_place;
+        $user->birth_place = $request->filled('birth_place')
+            ? json_decode($request->birth_place, true)
+            : null;
         $user->gender      = $request->gender;
 
         $user->pincode = $request->pincode;
@@ -143,7 +145,7 @@ class UserController extends AdminController
 
             "dob"         => "nullable|date",
             "birth_time"  => "nullable",
-            "birth_place" => "nullable|string|max:255",
+            "birth_place" => "nullable|json",
             "gender"      => "nullable|in:male,female,other",
             
             "pincode"      => "nullable|string|max:10",
@@ -187,7 +189,9 @@ class UserController extends AdminController
 
             $user->dob         = $request->dob;
             $user->birth_time  = $request->birth_time;
-            $user->birth_place = $request->birth_place;
+            $user->birth_place = $request->filled('birth_place')
+                ? json_decode($request->birth_place, true)
+                : null;
             $user->gender      = $request->gender;
             $user->pincode     = $request->pincode;
             $user->address     = $request->address;

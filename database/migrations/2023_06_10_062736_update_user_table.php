@@ -39,7 +39,7 @@ return new class extends Migration
 
             $table->date('dob')->nullable()->after('pincode');
             $table->time('birth_time')->nullable()->after('dob');
-            $table->string('birth_place')->nullable()->after('birth_time');
+            $table->json('birth_place')->nullable()->after('birth_time');
 
             $table->enum('gender', ['male', 'female', 'other'])->nullable()->after('birth_place');
             $table->string('marital_status')->nullable()->after('gender');

@@ -2,31 +2,35 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use OpenAI\Laravel\Facades\OpenAI;
 
 class OpenAiService
 {
     public function chat(array $messages): string
     {
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . env('OPENROUTER_API_KEY'),
-            'HTTP-Referer' => config('app.url'),
-            'X-Title' => config('app.name'),
-        ])->post('https://openrouter.ai/api/v1/chat/completions', [
-            'model' => 'deepseek/deepseek-chat',
-            'messages' => $messages,
-            'temperature' => 0,
+        Log::info('OPENAI REQUEST', [
+
+            'system_prompt_chars' => strlen($messages[0]['content'] ?? ''),
+
+            'system_prompt_preview' => substr(
+                $messages[0]['content'] ?? '',
+                0,
+                1500
+            ),
+
+            'total_request_chars' => strlen(json_encode($messages)),
+
+            'approx_tokens' => ceil(strlen(json_encode($messages)) / 4),
+
         ]);
 
-        if (!$response->successful()) {
-            throw new \Exception(
-                $response->json('error.message')
-                ?? 'AI service error'
-            );
-        }
+        $response = OpenAI::chat()->create([
+            'model' => 'gpt-4o-mini',
+            'messages' => $messages,
+            'temperature' => 0.7,
+        ]);
 
-        return trim($response->json(
-            'choices.0.message.content'
-        ));
+        return $response->choices[0]->message->content;
     }
 }
