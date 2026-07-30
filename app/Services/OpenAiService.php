@@ -10,27 +10,19 @@ class OpenAiService
     public function chat(array $messages): string
     {
         Log::info('OPENAI REQUEST', [
-
+            'model' => 'gpt-4.1-mini',
+            'messages_count' => count($messages),
             'system_prompt_chars' => strlen($messages[0]['content'] ?? ''),
-
-            'system_prompt_preview' => substr(
-                $messages[0]['content'] ?? '',
-                0,
-                1500
-            ),
-
             'total_request_chars' => strlen(json_encode($messages)),
-
             'approx_tokens' => ceil(strlen(json_encode($messages)) / 4),
-
         ]);
-
+    
         $response = OpenAI::chat()->create([
-            'model' => 'gpt-4o-mini',
+            'model' => 'gpt-4.1-mini',
             'messages' => $messages,
-            'temperature' => 0.7,
+            'temperature' => 1,
         ]);
-
-        return $response->choices[0]->message->content;
+    
+        return trim($response->choices[0]->message->content ?? '');
     }
 }

@@ -245,7 +245,15 @@ class AiChatApiController extends Controller
             }
 
             $freeMessages = (int) config('services.ai_chat.free_messages', 0);
-            $isFree = $session->free_messages_used < $freeMessages;
+            
+            $userFreeUsed = AiChatMessage::whereHas('session', function ($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })
+            ->where('sender', 'user')
+            ->where('is_free', true)
+            ->count();
+            
+            $isFree = $userFreeUsed < $freeMessages;
             $chatPrice = $isFree ? 0 : (float) config('services.ai_chat.price');
 
             $wallet = null;
@@ -270,7 +278,7 @@ class AiChatApiController extends Controller
                 'message' => $currentQuestion,
                 'charged_amount' => $chatPrice,
                 'is_free' => $isFree,
-                'model' => 'gpt-4o-mini',
+                'model' => 'gpt-4.1-mini',
             ]);
 
             if (!$isFree) {
@@ -329,7 +337,7 @@ class AiChatApiController extends Controller
                 'message' => $reply,
                 'is_free' => $isFree,
                 'charged_amount' => 0,
-                'model' => 'gpt-4o-mini',
+                'model' => 'gpt-4.1-mini',
             ]);
 
             $session->update(['last_message_at' => now()]);
@@ -339,7 +347,7 @@ class AiChatApiController extends Controller
             $response = [
                 'status' => true,
                 'reply' => $reply,
-                'remaining_questions' => $this->getRemainingQuestions($session),
+                // 'remaining_questions' => $this->getRemainingQuestions($session),
             ];
 
             // Only exposed when APP_DEBUG=true in .env — never in production.
@@ -433,7 +441,7 @@ class AiChatApiController extends Controller
         if ($isDatabaseQuestion) {
             $messages[] = [
                 'role' => 'user',
-                'content' => $currentQuestion . "\n\nIMPORTANT: Reply in maximum 2 short bullet points. No paragraphs. Maximum 35 words. Only provide detailed explanation if I explicitly ask for it.",
+                'content' => $currentQuestion . "\n\nIMPORTANT: Reply using valid Markdown. Use exactly 2–3 bullet points. Highlight important astrology terms using **bold**. Keep the total reply between 500 and 900 characters unless I explicitly ask for detailed analysis.",
             ];
 
             return $messages;
@@ -459,9 +467,15 @@ class AiChatApiController extends Controller
     private function sanitizeReply(string $reply): string
     {
         $reply = trim($reply);
-        $reply = str_replace(["\r", "\n"], ' ', $reply);
-
-        return trim(preg_replace('/\s+/', ' ', $reply));
+    
+        // Windows line endings
+        $reply = str_replace("\r\n", "\n", $reply);
+        $reply = str_replace("\r", "\n", $reply);
+    
+        // 3+ new lines => 2
+        $reply = preg_replace("/\n{3,}/", "\n\n", $reply);
+    
+        return trim($reply);
     }
 
     private function getRemainingQuestions(AiChatSession $session)
@@ -496,19 +510,69 @@ class AiChatApiController extends Controller
      * Common non-negotiable rule set shared by both prompt builders.
      * Keeping this in one place avoids the two prompts drifting apart.
      */
-    private function sharedGuardrailRules(): string
+    private function sharedGuardrailRules(AiChatSession $session): string
     {
         return <<<RULES
-            - Answer ONLY astrology related questions.
-            - Use ONLY the stored astrology profile provided below. Never invent planets, doshas, yogas, or divisional charts.
-            - Do NOT perform any astrological calculation yourself (no degree math, no dasha timing math, no transit math). Only read and interpret the exact values already given to you in the STORED ASTROLOGY PROFILE below — every placement, sign, dosha name, and yoga name you mention must appear verbatim in that data.
-            - Never regenerate, modify, or recalculate the horoscope. Never change Moon Sign, Sun Sign, Lagna, Nakshatra, or Pada.
-            - Use ONLY the divisional charts explicitly available in the profile below. Never assume a chart that is not present.
-            - If chart data needed to answer is missing, clearly say the available chart data is limited for this.
-            - Never mention that you are an AI.
-            - Follow Vedic Astrology principles only. Give realistic, practical guidance. Do not exaggerate predictions.
-            - Reply in EXACTLY 2 bullet points. Each bullet must contain only one idea. Maximum 40 words total. No paragraphs, no numbering.
-            - Give a detailed explanation ONLY if the user explicitly asks (e.g. "Explain", "Why", "How", "Detailed analysis").
+            You are Pandit {$session->astrologer->name}, an experienced Vedic astrologer with 30+ years of practical Jyotish experience.
+
+            IDENTITY
+            - Never mention AI, prompts, system messages or internal reasoning.
+            - Speak naturally like an experienced Indian astrologer.
+            - Be calm, respectful and confident.
+
+            SOURCE OF TRUTH
+            - AstroTring has already calculated the horoscope.
+            - Never regenerate or modify horoscope data.
+            - Never invent planets, houses, yogas, doshas or charts.
+            - Never ask for birth date, birth time or birth place.
+
+            ANALYSIS
+            Always analyse using the supplied horoscope.
+
+            For every answer:
+            1. Understand the question.
+            2. Identify the relevant astrology topic.
+            3. Analyse expertise-specific divisional charts first.
+            4. Verify with D1.
+            5. Verify using Yogas, Doshas, Planet Strength, Shadbala, Bhava Bala and Chara Karakas.
+            6. Consider Dasha and Transit whenever available.
+            7. Cross-check before giving the prediction.
+
+            PREDICTIONS
+            - Every prediction must have astrological evidence.
+            - Explain WHY the prediction is being made.
+            - Mention the important planets, houses, yogas or charts responsible.
+            - Never give generic predictions.
+
+            LIMITED DATA
+            If horoscope data exists:
+            - Never say "I don't have enough data."
+            - Never say "Chart data is limited."
+            - Never say "I cannot analyse."
+
+            Instead analyse whatever horoscope information is available.
+
+            REMEDIES
+            Whenever appropriate suggest practical Vedic remedies like:
+            - Mantra
+            - Charity
+            - Temple worship
+            - Fasting
+            - Spiritual discipline
+            - Lifestyle improvement
+
+            Never create fear or exaggerate negative outcomes.
+
+            STYLE
+            - Write naturally.
+            - Avoid robotic wording.
+            - Avoid repetition.
+            - Keep answers concise unless detailed analysis is requested.
+
+            EXPERTISE
+            Answer only within the currently selected expertise.
+            If the user asks something outside it, politely suggest starting a session with the appropriate astrologer.
+
         RULES;
     }
 
@@ -516,30 +580,81 @@ class AiChatApiController extends Controller
     {
         $userProfile = $this->getUserProfileContext($session);
         $astrologyProfile = $this->getAstrologyContext($session);
-        $rules = $this->sharedGuardrailRules();
+        $rules = $this->sharedGuardrailRules($session);
 
         return <<<PROMPT
-            You are {$session->astrologer->name}, a highly experienced Vedic Astrologer.
+            You are Pandit {$session->astrologer->name}, an experienced Vedic astrologer.
 
             CURRENT EXPERTISE
             {$session->expertise->name}
 
-            ==================================================
-            USER PROFILE (already on record — never ask for this again)
-
+            KNOWN USER PROFILE
             {$userProfile}
-            ==================================================
-            STORED ASTROLOGY PROFILE (already calculated from the birth details above — never ask for birth details again)
 
+            STORED HOROSCOPE
             {$astrologyProfile}
-            ==================================================
 
-            IMPORTANT RULES
+            IMPORTANT
+
+            - The horoscope is already calculated.
+            - Never regenerate or modify it.
+            - Never ask for birth date, birth time or birth place.
+            - Use the supplied horoscope as the only source of truth.
+
+            ANALYSIS
+
+            For every answer:
+
+            • Understand the user's question.
+
+            • Analyse the divisional charts relevant to this expertise.
+
+            • Verify using D1.
+
+            • Cross-check with:
+            - Yogas
+            - Doshas
+            - Planet Strength
+            - Shadbala
+            - Bhava Bala
+            - Chara Karakas
+            - Dasha
+            - Transit
+
+            Only after verification give the final prediction.
+            
+            OUTPUT FORMAT (MANDATORY)
+
+            - Always reply using valid Markdown.
+            - Never return HTML or JSON.
+            - Use only these Markdown elements:
+              - ## for an optional short heading.
+              - **bold** for important planets, houses, yogas, doshas, remedies and key conclusions.
+              - - for bullet points.
+            - Always write exactly 2–3 bullet points.
+            - Leave one blank line between each bullet point.
+            - Each bullet point should contain 2–4 short sentences.
+            - Never write one large paragraph.
+            - Keep the total response between 500 and 900 characters unless the user explicitly asks for a detailed explanation.
+            - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
+
+            RESPONSE STYLE
+            
+            - Speak naturally like an experienced Vedic astrologer.
+            - Explain WHY the prediction is being made.
+            - Mention relevant planets, houses, yogas or doshas as evidence.
+            - Use simple and easy-to-understand language.
+            - End naturally with one short follow-up suggestion when appropriate.
+
+            FIRST MESSAGE ONLY
+
+            Introduce yourself briefly and ask:
+
+            "Which language would you like to continue in?"
+
+            Never ask this again in the same session.
 
             {$rules}
-            - Stay ONLY within this expertise ({$session->expertise->name}). If the question falls outside it, politely ask the user to start a session with the appropriate astrologer/expertise instead.
-            - If this is the first interaction, briefly introduce yourself and ask: "Which language would you like to continue in?" Never ask this again after the first reply.
-
         PROMPT;
     }
 
@@ -547,32 +662,104 @@ class AiChatApiController extends Controller
     {
         $userProfile = $this->getUserProfileContext($session);
         $astrologyProfile = $this->getAstrologyContext($session);
-        $rules = $this->sharedGuardrailRules();
+        $rules = $this->sharedGuardrailRules($session);
 
         return <<<PROMPT
-            You are {$session->astrologer->name}, a professional Vedic Astrologer.
+            You are Pandit {$session->astrologer->name}, an experienced Vedic astrologer.
+
+            This is an ongoing conversation.
 
             CURRENT EXPERTISE
+
             {$session->expertise->name}
 
-            ==================================================
-            USER PROFILE (already on record — never ask for this again)
+            KNOWN USER PROFILE
 
             {$userProfile}
-            ==================================================
-            STORED ASTROLOGY PROFILE (already calculated from the birth details above — never ask for birth details again)
+
+            STORED HOROSCOPE
 
             {$astrologyProfile}
-            ==================================================
 
-            IMPORTANT RULES
+            IMPORTANT
+
+            - Continue from previous messages.
+            - Never greet again.
+            - Never introduce yourself again.
+            - Never ask the user's language again.
+            - Never ask for birth date, birth time or birth place.
+            - The horoscope has already been calculated by AstroTring.
+            - Treat it as the only source of truth.
+
+            HOW TO ANSWER
+
+            For every reply:
+
+            1. Understand the user's actual question.
+            2. Analyse the relevant divisional charts.
+            3. Verify using D1.
+            4. Cross-check using:
+            - Yogas
+            - Doshas
+            - Planet Strength
+            - Shadbala
+            - Bhava Bala
+            - Chara Karakas
+            - Dasha
+            - Transit
+            5. Explain WHY the conclusion is being made.
+            6. Give practical guidance if appropriate.
+
+            STYLE
+
+            - Speak naturally like an experienced Indian astrologer.
+            - Do not sound like AI.
+            - Avoid repeating previous answers.
+            - Keep replies concise.
+            - Normally answer in 2–3 meaningful points.
+            - Give detailed analysis only if the user explicitly requests it.
+            - When suitable, suggest the next relevant analysis naturally.
+            - Keep replies between 500 and 900 characters.
+            - Always format the answer using bullet points (•).
+            - Use exactly 2–3 bullet points.
+            - Each bullet should contain 2–4 short sentences.
+            - Never write the entire reply as one paragraph.
+            - Do not exceed 900 characters unless the user explicitly asks for a detailed explanation.
+            
+            OUTPUT FORMAT (MANDATORY)
+            
+            - Always reply using valid Markdown.
+            - Use only these Markdown elements:
+              - ## for small headings (when needed)
+              - **text** for important words or astrology terms
+              - - for bullet points
+            - Keep exactly 2–3 bullet points.
+            - Each bullet should contain 2–4 short sentences.
+            - Leave one blank line between bullet points.
+            - Highlight important planets, houses, yogas, doshas and remedies using **bold**.
+            - Never return HTML.
+            - Never return JSON.
+            - Never write one large paragraph.
+            - Keep the total response between 500 and 900 characters unless detailed analysis is requested.
+            - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
+
+            REMEDIES
+
+            If appropriate, suggest practical Vedic remedies such as:
+            - Mantra
+            - Charity
+            - Temple worship
+            - Spiritual discipline
+            - Lifestyle improvements
+
+            Never create fear or exaggerate negative outcomes.
+
+            ASTROTRING
+
+            If the user asks about AstroTring products or services, recommend:
+            https://astrotring.shop/
 
             {$rules}
-            - Continue the existing conversation naturally. Never greet again. Never ask language again.
-            - Stay ONLY within this expertise ({$session->expertise->name}). If the question falls outside it, politely ask the user to start a session with the appropriate astrologer/expertise instead.
-            - Never repeat previous answers unnecessarily.
-            - If the user asks about AstroTring products, suggest: https://astrotring.shop/
-
         PROMPT;
     }
 
@@ -671,26 +858,137 @@ class AiChatApiController extends Controller
     ];
 
     /**
-     * Builds the astrology context string using a hybrid strategy:
-     *
-     *   1. Core identifiers (ascendant, sun_sign, moon_rashi, nakshatra,
-     *      doshas, yogas, etc.) come straight from their dedicated columns.
-     *   2. For each relevant_chart code, if a dedicated column exists
-     *      (D1, D2, D7, D9, D10, D12, D20, D24, D60), use it directly.
-     *   3. Only codes WITHOUT a dedicated column (D4, D16, D27, D30, D40,
-     *      D45, Dasha, Transit, Panchang, Muhurat, Numerology, Nakshatra
-     *      Analysis) fall back to raw_data via AstrologyChartExtractor,
-     *      which reads path definitions from config('astrology').
-     *
-     * This avoids depending on raw_data parsing for data that already
-     * exists cleanly in typed columns.
+     * Remove HTML and return Present / Absent summary.
      */
+    private function formatDoshas($doshas): array
+    {
+        $doshas = is_array($doshas)
+            ? $doshas
+            : (json_decode((string) $doshas, true) ?? []);
+
+        $result = [];
+
+        foreach ($doshas as $name => $value) {
+
+            $text = strtolower(strip_tags((string) $value));
+
+            $present = str_contains($text, 'there is ')
+                && !str_contains($text, 'there is no');
+
+            $result[$name] = $present ? 'Present' : 'Absent';
+        }
+
+        return $result;
+    }
+
+    /**
+     * Return only Yoga names.
+     */
+    private function formatYogas($yogas): array
+    {
+        $yogas = is_array($yogas)
+            ? $yogas
+            : (json_decode((string) $yogas, true) ?? []);
+
+        $names = [];
+
+        if (!empty($yogas['yoga_list'])) {
+
+            foreach ($yogas['yoga_list'] as $row) {
+
+                if (!empty($row[1])) {
+                    $names[] = $row[1];
+                }
+            }
+        }
+
+        return [
+            'total' => count($names),
+            'names' => $names,
+        ];
+    }
+
+    /**
+     * Planet strength summary.
+     */
+    private function formatPlanetStrength($strength): array
+    {
+        $strength = is_array($strength)
+            ? $strength
+            : (json_decode((string) $strength, true) ?? []);
+
+        return [
+
+            'Exalted' => $strength['exalted_planets'] ?? [],
+
+            'Retrograde' => $strength['retrograde_planets'] ?? [],
+
+            'Debilitated' => $strength['debilitated_planets'] ?? [],
+
+            'Own Sign' => $strength['own_sign_planets'] ?? [],
+
+            'Friendly Sign' => $strength['friend_sign_planets'] ?? [],
+
+            'Enemy Sign' => $strength['enemy_sign_planets'] ?? [],
+        ];
+    }
+
+    /**
+     * Very compact Shadbala summary.
+     */
+    private function formatShadbala($value): string
+    {
+        if (empty($value)) {
+            return 'Not Available';
+        }
+
+        return 'Available';
+    }
+
+    /**
+     * Very compact Bhava Bala summary.
+     */
+    private function formatBhavaBala($value): string
+    {
+        if (empty($value)) {
+            return 'Not Available';
+        }
+
+        return 'Available';
+    }
+
+    /**
+     * Convert chart into readable format.
+     */
+    private function formatChart($chart): array
+    {
+        $chart = is_array($chart)
+            ? $chart
+            : (json_decode((string) $chart, true) ?? []);
+
+        $rows = [];
+
+        foreach ($chart as $planet => $details) {
+
+            if (!is_array($details)) {
+                continue;
+            }
+
+            $rows[$planet] = [
+                'sign' => $details['sign'] ?? null,
+                'longitude' => $details['longitude'] ?? null,
+            ];
+        }
+
+        return $rows;
+    }
+
     private function getAstrologyContext(AiChatSession $session): string
     {
         $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
 
         if (!$chart) {
-            return 'No stored astrology profile found for this user.';
+            return 'No horoscope available.';
         }
 
         $relevantCharts = $session->expertise->relevant_chart ?? [];
@@ -699,44 +997,145 @@ class AiChatApiController extends Controller
             $relevantCharts = json_decode($relevantCharts, true) ?? [];
         }
 
-        $result = [];
+        $profile = [];
 
-        foreach (self::CORE_PROFILE_FIELDS as $field) {
-            if (isset($chart->{$field}) && $chart->{$field} !== null && $chart->{$field} !== '') {
-                $result[$field] = $chart->{$field};
-            }
-        }
+        /*
+        |--------------------------------------------------------------------------
+        | Core Horoscope
+        |--------------------------------------------------------------------------
+        */
 
-        $codesNeedingRawData = [];
+        $profile['Ascendant'] = $chart->ascendant;
+        $profile['Sun Sign'] = $chart->sun_sign;
+        $profile['Moon Sign'] = $chart->moon_sign;
+        $profile['Moon Rashi'] = $chart->moon_rashi;
+
+        $profile['Nakshatra'] = [
+            'Name'   => $chart->nakshatra_name,
+            'Pada'   => $chart->nakshatra_pada,
+            'Lord'   => $chart->nakshatra_lord,
+        ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | Doshas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Doshas'] = $this->formatDoshas($chart->doshas);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Yogas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Yogas'] = $this->formatYogas($chart->yogas);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Planet Strength
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Planet Strength'] = $this->formatPlanetStrength(
+            $chart->planet_strength
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Strength Summary
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Shadbala'] = $this->formatShadbala(
+            $chart->shadbala
+        );
+
+        $profile['Bhava Bala'] = $this->formatBhavaBala(
+            $chart->bhava_bala
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Chara Karakas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Chara Karakas'] = is_array($chart->chara_karakas)
+            ? $chart->chara_karakas
+            : json_decode((string) $chart->chara_karakas, true);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Relevant Charts Only
+        |--------------------------------------------------------------------------
+        */
 
         foreach ($relevantCharts as $code) {
+
             $column = self::CHART_COLUMN_MAP[$code] ?? null;
 
-            if ($column && isset($chart->{$column}) && $chart->{$column} !== null) {
-                $result['charts'][$code] = $chart->{$column};
+            if (!$column) {
                 continue;
             }
 
-            $codesNeedingRawData[] = $code;
+            if (empty($chart->{$column})) {
+                continue;
+            }
+
+            $profile['Charts'][$code] = $this->formatChart(
+                $chart->{$column}
+            );
         }
 
-        if (!empty($codesNeedingRawData) && !empty($chart->raw_data)) {
-            $rawData = json_decode((string) $chart->raw_data, true);
+        /*
+        |--------------------------------------------------------------------------
+        | Charts from raw_data
+        |--------------------------------------------------------------------------
+        */
 
-            if (is_array($rawData) && !empty($rawData)) {
-                $extracted = AstrologyChartExtractor::extract($rawData, $codesNeedingRawData);
+        $missingCharts = [];
 
-                if (!empty($extracted['charts'])) {
-                    $result['charts'] = array_merge($result['charts'] ?? [], $extracted['charts']);
+        foreach ($relevantCharts as $code) {
+
+            if (!isset(self::CHART_COLUMN_MAP[$code])) {
+                $missingCharts[] = $code;
+            }
+        }
+
+        if (!empty($missingCharts) && !empty($chart->raw_data)) {
+
+            $raw = json_decode($chart->raw_data, true);
+
+            if (is_array($raw)) {
+
+                $extra = AstrologyChartExtractor::extract(
+                    $raw,
+                    $missingCharts
+                );
+
+                if (!empty($extra['charts'])) {
+
+                    foreach ($extra['charts'] as $name => $value) {
+
+                        $profile['Charts'][$name] = $value;
+                    }
                 }
             }
         }
 
-        if (empty($result)) {
-            return 'No relevant chart data is available for this expertise.';
-        }
+        /*
+        |--------------------------------------------------------------------------
+        | Final
+        |--------------------------------------------------------------------------
+        */
 
-        return json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return json_encode(
+            $profile,
+            JSON_UNESCAPED_UNICODE |
+            JSON_UNESCAPED_SLASHES
+        );
     }
 
     private function errorResponse(string $message, int $status, ?string $type = null): JsonResponse
