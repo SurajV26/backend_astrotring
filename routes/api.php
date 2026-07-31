@@ -262,7 +262,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
         });
 
-
     /*
     |--------------------------------------------------------------------------
     | WALLET API (FOR BOTH USER & ASTRO)
@@ -272,7 +271,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/', [WalletApiController::class, 'show']);
         Route::post('/recharge', [WalletApiController::class, 'recharge']);
         Route::get('/recharge-history', [WalletApiController::class, 'rechargeHistory']);
-         Route::get('/chat-analysis', [WalletApiController::class, 'chatAnalysis']);
+         Route::get('/chat-statistics', [WalletApiController::class, 'chatStatistics']);
     });
     
     Route::prefix('payment_accounts')->group(function () {
