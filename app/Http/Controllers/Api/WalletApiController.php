@@ -36,7 +36,7 @@ class WalletApiController extends Controller
         ]);
     }
 
-    public function chatAnalysis(Request $request)
+    public function chatStatistics(Request $request)
     {
         $user = auth()->user();
 
