@@ -24,14 +24,23 @@ class WalletApiController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'balance' => $wallet->balance,
-                'total_added' => $wallet->total_added,
-                'total_spent' => $wallet->total_spent,
-                'total_earned' => $wallet->total_earned,
-                'total_withdrawn' => $wallet->total_withdrawn,
-                'last_recharge_amount' => $wallet->last_recharge_amount,
+            'data' =>[
+                'balance' => (float) $wallet->balance,
+                'locked_balance' => (float) $wallet->locked_balance,
+                'total_added' => (float) $wallet->total_added,
+                'total_spent' => (float) $wallet->total_spent,
+                'total_earned' => (float) $wallet->total_earned,
+                'total_withdrawn' => (float) $wallet->total_withdrawn,
+                'last_recharge_amount' => (float) $wallet->last_recharge_amount,
                 'last_recharge_at' => $wallet->last_recharge_at,
+                'wallet_age' => optional($wallet->created_at)->diffForHumans(),
+                'created_at' => optional($wallet->created_at)->format('d M Y h:i A'),
+            ],
+            'user' => [
+                'id' => $wallet->user->id,
+                'name' => $wallet->user->name,
+                'email' => $wallet->user->email,
+                'mobile' => $wallet->user->mobile,
             ]
         ]);
     }
@@ -49,6 +58,16 @@ class WalletApiController extends Controller
             ->where('user_id', $user->id)
             ->latest('last_message_at')
             ->paginate(10);
+
+        $totalPaidChats = $sessions->getCollection()->sum('paid_messages');
+
+        $totalFreeChats = $sessions->getCollection()->sum('free_messages_used');
+
+        $totalSpent = $sessions->getCollection()->sum(function ($session) {
+            return $session->transactions
+                ->where('type', 'debit')
+                ->sum('amount');
+        });
 
         $history = $sessions->getCollection()->map(function ($session) {
 
@@ -120,7 +139,17 @@ class WalletApiController extends Controller
 
             'status' => true,
 
-            'message' => 'Chat history fetched successfully',
+            'message' => 'Chat statistics fetched successfully',
+
+            'summary' => [
+
+                'total_paid_chats' => (int) $totalPaidChats,
+
+                'total_free_chats' => (int) $totalFreeChats,
+
+                'total_spent' => (float) $totalSpent,
+
+            ],
 
             'history' => $history,
 
