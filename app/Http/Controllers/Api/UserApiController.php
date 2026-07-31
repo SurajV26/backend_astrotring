@@ -316,258 +316,149 @@ class UserApiController extends Controller
 
     public function profile(Request $request)
     {
-        $user = auth()->user()->load(['wallet']);
+        try {
 
-        $perPage = (int) $request->get('per_page', 20);
-        // call_page, chat_page, recharge_page, reviews_page
+            $user = auth()->user()->load([
+                'wallet',
+                'reviews.astrologer'
+            ]);
 
-        /* ================= TODAY SUMMARY ================= */
-        $todayCall = CallSession::where('user_id', $user->id)
-            ->where('status', 'completed')
-            ->whereDate('started_at', today())
-            ->sum('amount');
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
 
-        $todayChat = AiChatTransaction::where('user_id', $user->id)
-            ->where('type', 'debit')
-            ->whereDate('created_at', today())
-            ->sum('amount');
+            $reviews = $user->reviews
+                ->sortByDesc('created_at')
+                ->values()
+                ->map(function ($review) {
 
-        $todayRecharge = DB::table('wallet_recharges')
-            ->where('wallet_id', optional($user->wallet)->id)
-            ->whereDate('recharged_at', today())
-            ->sum('amount');
+                    return [
 
-        /* ================= LIFETIME SUMMARY ================= */
-        $totalCall = CallSession::where('user_id', $user->id)
-            ->where('status', 'completed')
-            ->sum('amount');
+                        'review_id' => $review->id,
 
-        $totalChat = AiChatTransaction::where('user_id', $user->id)
-            ->where('type', 'debit')
-            ->sum('amount');
+                        'astrologer' => [
 
-        $totalRecharge = DB::table('wallet_recharges')
-            ->where('wallet_id', optional($user->wallet)->id)
-            ->sum('amount');
+                            'id' => optional($review->astrologer)->id,
 
-        /* ================= CALL HISTORY (PAGINATED) ================= */
-        $callPaginator = CallSession::where('user_id', $user->id)
-            ->with('astrologer:id,name,code')
-            ->orderByDesc('started_at')
-            ->paginate($perPage, ['*'], 'call_page');
+                            'code' => optional($review->astrologer)->code,
 
-        $callPaginator->getCollection()->transform(function ($c) {
-            return [
-                'id' => $c->id,
-                'astrologer_name' => $c->astrologer->name ?? null,
-                'astrologer_code' => $c->astrologer->code ?? null,
-                'started_at' => $c->started_at,
-                'ended_at' => $c->ended_at,
-                'duration_minutes' => $c->duration,
-                'amount' => (float) $c->amount,
-                'status' => $c->status,
-            ];
-        });
+                            'name' => optional($review->astrologer)->name,
 
-        /* ================= CHAT HISTORY (PAGINATED) ================= */
-        $chatPaginator = AiChatSession::with([
-            'astrologer:id,name,slug,image',
-            'expertise:id,ai_astrologer_id,name,slug',
-            'messages.question:id,question',
-            'messages:id,session_id,question_id,sender,message,is_free,charged_amount,model,tokens_used,created_at',
-            'transactions:id,user_id,session_id,message_id,amount,balance_before,balance_after,type,remark,created_at'
-        ])
-        ->where('user_id', $user->id)
-        ->latest()
-        ->paginate($perPage, ['*'], 'chat_page');
+                            'profile_image' => optional($review->astrologer)->profile_image
+                                ? asset('storage/user/' . $review->astrologer->profile_image)
+                                : null,
 
-        $chatPaginator->getCollection()->transform(function ($session) {
+                            'rating' => (float) (optional($review->astrologer)->rating ?? 0),
 
-            return [
+                            'rating_count' => (int) (optional($review->astrologer)->rating_count ?? 0),
 
-                'session_id' => $session->id,
+                        ],
 
-                'astrologer' => [
-                    'id' => $session->astrologer?->id,
-                    'name' => $session->astrologer?->name,
-                    'slug' => $session->astrologer?->slug,
-                    'image' => $session->astrologer?->image
-                        ? asset('storage/aiAstrologers/'.$session->astrologer->image)
+                        'rating' => (int) $review->rating,
+
+                        'review' => $review->review,
+
+                        'created_at' => $review->created_at->format('d M Y h:i A'),
+
+                        'updated_at' => $review->updated_at->format('d M Y h:i A'),
+
+                    ];
+
+                });
+
+            return response()->json([
+
+                'status' => true,
+
+                'message' => 'Profile fetched successfully',
+
+                'user' => [
+
+                    'id' => $user->id,
+
+                    'code' => $user->code,
+
+                    'username' => $user->username,
+
+                    'name' => $user->name,
+
+                    'email' => $user->email,
+
+                    'mobile' => $user->mobile,
+
+                    'country_code' => $user->country_code,
+
+                    'profile_image' => $user->profile_image
+                        ? asset('storage/user/' . $user->profile_image)
                         : null,
+
+                    'gender' => $user->gender,
+
+                    'dob' => $user->dob,
+
+                    'birth_time' => $user->birth_time,
+
+                    'birth_place' => $user->birth_place,
+
+                    'marital_status' => $user->marital_status,
+
+                    'occupation' => $user->occupation,
+
+                    'about' => $user->about,
+
+                    'address' => $user->address,
+
+                    'pincode' => $user->pincode,
+
+                    'status' => (int) $user->status,
+
+                    'is_online' => (int) $user->is_online,
+
                 ],
 
-                'expertise' => [
-                    'id' => $session->expertise?->id,
-                    'name' => $session->expertise?->name,
-                    'slug' => $session->expertise?->slug,
+                'wallet' => [
+
+                    'balance' => (float) ($user->wallet->balance ?? 0),
+
+                    'total_added' => (float) ($user->wallet->total_added ?? 0),
+
+                    'total_spent' => (float) ($user->wallet->total_spent ?? 0),
+
+                    'last_recharge_amount' => (float) ($user->wallet->last_recharge_amount ?? 0),
+
+                    'last_recharge_at' => $user->wallet->last_recharge_at,
+
                 ],
 
-                'free_messages_used' => $session->free_messages_used,
-                'paid_messages' => $session->paid_messages,
-                'total_amount' => (float) $session->total_amount,
+                'reviews' => $reviews,
 
-                'status' => $session->status,
-                'started_at' => $session->started_at,
-                'last_message_at' => $session->last_message_at,
-                'closed_at' => $session->closed_at,
+            ]);
 
-                'messages' => $session->messages->map(function ($message) {
+        } catch (\Throwable $e) {
 
-                    return [
-                        'id' => $message->id,
-                        'question_id' => $message->question_id,
-                        'question' => optional($message->question)->question,
-                        'sender' => $message->sender,
-                        'message' => $message->message,
-                        'is_free' => (bool) $message->is_free,
-                        'charged_amount' => (float) $message->charged_amount,
-                        'model' => $message->model,
-                        'tokens_used' => $message->tokens_used,
-                        'created_at' => $message->created_at,
-                    ];
+            \Log::error('Profile Error', [
 
-                })->values(),
+                'message' => $e->getMessage(),
 
-                'transactions' => $session->transactions->map(function ($transaction) {
+                'file' => $e->getFile(),
 
-                    return [
-                        'id' => $transaction->id,
-                        'message_id' => $transaction->message_id,
-                        'amount' => (float) $transaction->amount,
-                        'balance_before' => (float) $transaction->balance_before,
-                        'balance_after' => (float) $transaction->balance_after,
-                        'type' => $transaction->type,
-                        'remark' => $transaction->remark,
-                        'created_at' => $transaction->created_at,
-                    ];
+                'line' => $e->getLine(),
 
-                })->values(),
-            ];
-        });
+            ]);
 
-        /* ================= RECHARGE HISTORY (PAGINATED) ================= */
-        $rechargeQuery = DB::table('wallet_recharges')
-            ->where('wallet_id', optional($user->wallet)->id)
-            ->orderByDesc('recharged_at');
+            return response()->json([
 
-        $rechargePaginator = $rechargeQuery->paginate($perPage, ['*'], 'recharge_page');
+                'status' => false,
 
-        // map recharge items to consistent structure
-        $rechargePaginator->getCollection()->transform(function ($r) {
-            return [
-                'id' => $r->id ?? null,
-                'amount' => (float) ($r->amount ?? $r->recharge_amount ?? 0),
-                'method' => $r->payment_method ?? null,
-                'recharged_at' => $r->recharged_at ?? $r->created_at ?? null,
-                'status' => $r->status ?? null,
-            ];
-        });
+                'message' => 'Failed to fetch profile',
 
-        /* ================= REVIEWS GIVEN (PAGINATED) ================= */
-        $reviewsQuery = Review::where('user_id', $user->id)
-            ->with('astrologer:id,name,code')
-            ->orderByDesc('created_at');
+                'error' => $e->getMessage(),
 
-        $reviewsPaginator = $reviewsQuery->paginate($perPage, ['*'], 'reviews_page');
-
-        $reviewsPaginator->getCollection()->transform(function ($r) {
-            return [
-                'id' => $r->id,
-                'rating' => (int) $r->rating,
-                'review' => $r->review,
-                'astrologer_name' => $r->astrologer->name ?? null,
-                'astrologer_code' => $r->astrologer->code ?? null,
-                'date' => $r->created_at,
-            ];
-        });
-
-        /* ================= RESPONSE ================= */
-        return response()->json([
-            'status' => true,
-
-            'user' => [
-                'id' => $user->id,
-                'code' => $user->code,
-                'username' => $user->username,
-                'name' => $user->name,
-                'email' => $user->email,
-                'mobile' => $user->mobile,
-                'country_code' => $user->country_code,
-                'gender' => $user->gender,
-                'marital_status' => $user->marital_status,
-                'occupation' => $user->occupation,
-                'dob' => $user->dob,
-                'birth_time' => $user->birth_time,
-                'birth_place' => $user->birth_place,
-                'about' => $user->about,
-                'address' => $user->address,
-                'pincode' => $user->pincode,
-                'profile_image' => $user->profile_image ? asset('storage/user/'.$user->profile_image) : null,
-            ],
-
-            'wallet' => [
-                'balance' => (float) ($user->wallet?->balance ?? 0),
-                'total_added' => (float) ($user->wallet?->total_added ?? 0),
-                'total_spent' => (float) ($user->wallet?->total_spent ?? 0),
-                'last_recharge_amount' => (float) ($user->wallet?->last_recharge_amount ?? 0),
-                'last_recharge_at' => $user->wallet?->last_recharge_at,
-            ],
-
-            'today_summary' => [
-                'call_spent' => (float) $todayCall,
-                'chat_spent' => (float) $todayChat,
-                'total_spent' => (float) ($todayCall + $todayChat),
-                'recharged' => (float) $todayRecharge,
-            ],
-
-            'lifetime_summary' => [
-                'call_spent' => (float) $totalCall,
-                'chat_spent' => (float) $totalChat,
-                'total_spent' => (float) ($totalCall + $totalChat),
-                'total_recharged' => (float) $totalRecharge,
-            ],
-
-            // paginated sections
-            'call_history' => [
-                'data' => $callPaginator->items(),
-                'meta' => [
-                    'current_page' => $callPaginator->currentPage(),
-                    'last_page' => $callPaginator->lastPage(),
-                    'per_page' => $callPaginator->perPage(),
-                    'total' => $callPaginator->total(),
-                ],
-            ],
-
-            'chat_history' => [
-                'data' => $chatPaginator->items(),
-                'meta' => [
-                    'current_page' => $chatPaginator->currentPage(),
-                    'last_page' => $chatPaginator->lastPage(),
-                    'per_page' => $chatPaginator->perPage(),
-                    'total' => $chatPaginator->total(),
-                ],
-            ],
-
-            'recharge_history' => [
-                'data' => $rechargePaginator->items(),
-                'meta' => [
-                    'current_page' => $rechargePaginator->currentPage(),
-                    'last_page' => $rechargePaginator->lastPage(),
-                    'per_page' => $rechargePaginator->perPage(),
-                    'total' => $rechargePaginator->total(),
-                ],
-            ],
-
-            'reviews_given' => [
-                'data' => $reviewsPaginator->items(),
-                'meta' => [
-                    'current_page' => $reviewsPaginator->currentPage(),
-                    'last_page' => $reviewsPaginator->lastPage(),
-                    'per_page' => $reviewsPaginator->perPage(),
-                    'total' => $reviewsPaginator->total(),
-                ],
-            ],
-        ]);
+            ], 500);
+        }
     }
 
     public function update(Request $request)
@@ -587,6 +478,7 @@ class UserApiController extends Controller
             'occupation' => 'nullable|string|max:255',
 
             'birth_time' => 'nullable|regex:/^\d{2}:\d{2}(:\d{2})?$/',
+
             'birth_place' => 'nullable|array',
             'birth_place.displayName' => 'nullable|string',
             'birth_place.place' => 'nullable|string',
@@ -601,136 +493,277 @@ class UserApiController extends Controller
             'address' => 'nullable|string|max:2000',
             'pincode' => 'nullable|string|max:10',
 
-            'astrologer_id' => 'nullable|exists:users,id',
-            'rating'        => 'nullable|integer|min:1|max:5',
-            'review'        => 'nullable|string|max:2000',
-
             'profile_image' => 'nullable|string|max:6000000',
+
+            'astrologer_id' => 'nullable|exists:users,id',
+            'rating' => 'nullable|integer|min:1|max:5',
+            'review' => 'nullable|string|max:2000',
+
         ]);
 
         if ($validator->fails()) {
+
             return response()->json([
                 'status' => false,
                 'message' => $validator->errors()->first(),
             ], 422);
+
         }
 
-        \DB::beginTransaction();
+        DB::beginTransaction();
 
         try {
 
             if ($request->filled('profile_image')) {
+
                 $user->profile_image = $this->saveBase64Image(
                     $request->profile_image,
                     'user',
                     $user->profile_image
                 );
+
             }
 
-            if ($request->has('name'))        $user->name = $request->name;
-            if ($request->has('email'))       $user->email = $request->email;
-            if ($request->has('mobile'))      $user->mobile = $request->mobile;
-            if ($request->has('country_code')) $user->country_code = $request->country_code;
+            $fields = [
 
-            if ($request->has('gender'))      $user->gender = $request->gender;
-            if ($request->has('dob'))         $user->dob = $request->dob;
-            if ($request->has('birth_place')) $user->birth_place = $request->birth_place;
+                'name',
+                'email',
+                'mobile',
+                'country_code',
+                'gender',
+                'dob',
+                'birth_place',
+                'marital_status',
+                'occupation',
+                'about',
+                'address',
+                'pincode',
+
+            ];
+
+            foreach ($fields as $field) {
+
+                if ($request->has($field)) {
+
+                    $user->{$field} = $request->{$field};
+
+                }
+
+            }
 
             if ($request->has('birth_time')) {
+
                 $time = $request->birth_time;
-                if (strlen($time) === 5) { // HH:MM → HH:MM:00
+
+                if (!empty($time) && strlen($time) == 5) {
+
                     $time .= ':00';
+
                 }
+
                 $user->birth_time = $time;
-            }
 
-            if ($request->has('marital_status')) {
-                $user->marital_status = $request->marital_status;
             }
-
-            if ($request->has('occupation')) {
-                $user->occupation = $request->occupation;
-            }
-
-            if ($request->has('about'))   $user->about = $request->about;
-            if ($request->has('address')) $user->address = $request->address;
-            if ($request->has('pincode')) $user->pincode = $request->pincode;
 
             $user->modified_by = $user->id;
+
             $user->save();
 
-            try {
+                try {
 
-                app(\App\Services\AstrologyChartService::class)
-                    ->generate($user);
-
-            } catch (\Throwable $e) {
-
-                \Log::error('Astrology Regeneration Failed', [
-
-                    'user_id' => $user->id,
-
-                    'message' => $e->getMessage()
-
-                ]);
-
-            }
-
-            if ($request->filled('astrologer_id') && $request->filled('rating')) {
-
-                $astrologer = User::where('id', $request->astrologer_id)
-                    ->where('type', 'astro')
-                    ->first();
-
-                if (! $astrologer) {
-                    throw new \Exception('Invalid astrologer');
-                }
-
-                Review::updateOrCreate(
-                    [
-                        'user_id' => $user->id,
-                        'astrologer_id' => $astrologer->id,
-                    ],
-                    [
-                        'rating' => $request->rating,
-                        'review' => $request->review,
-                    ]
-                );
-
-                $stats = Review::where('astrologer_id', $astrologer->id)
-                    ->selectRaw('AVG(rating) as avg_rating, COUNT(*) as total')
-                    ->first();
-
-                $astrologer->update([
-                    'rating' => round($stats->avg_rating, 2),
-                    'rating_count' => $stats->total,
-                ]);
-            }
-
-            \DB::commit();
-
-            return response()->json([
-                'status' => true,
-                'message' => 'Profile updated successfully',
-                'user' => $user->fresh(),
-            ]);
+            app(\App\Services\AstrologyChartService::class)
+                ->generate($user);
 
         } catch (\Throwable $e) {
 
-            \DB::rollBack();
+            \Log::error('Astrology Regeneration Failed', [
+
+                'user_id' => $user->id,
+                'message' => $e->getMessage(),
+
+            ]);
+
+        }
+
+        if ($request->filled('astrologer_id') && $request->filled('rating')) {
+
+            $astrologer = User::where('id', $request->astrologer_id)
+                ->where('type', 'astro')
+                ->first();
+
+            if (! $astrologer) {
+
+                throw new \Exception('Invalid astrologer.');
+
+            }
+
+            Review::updateOrCreate(
+
+                [
+                    'user_id'       => $user->id,
+                    'astrologer_id' => $astrologer->id,
+                ],
+
+                [
+                    'rating' => $request->rating,
+                    'review' => $request->review,
+                ]
+
+            );
+
+            $stats = Review::where('astrologer_id', $astrologer->id)
+                ->selectRaw('COUNT(*) as total_reviews')
+                ->selectRaw('AVG(rating) as average_rating')
+                ->first();
+
+            $astrologer->rating = round($stats->average_rating, 2);
+            $astrologer->rating_count = $stats->total_reviews;
+            $astrologer->save();
+
+        }
+
+        $user->load([
+
+            'wallet',
+            'reviews.astrologer',
+
+        ]);
+
+        $reviews = $user->reviews
+            ->sortByDesc('created_at')
+            ->values()
+            ->map(function ($review) {
+
+                return [
+
+                    'review_id' => $review->id,
+
+                    'astrologer' => [
+
+                        'id' => optional($review->astrologer)->id,
+
+                        'code' => optional($review->astrologer)->code,
+
+                        'name' => optional($review->astrologer)->name,
+
+                        'profile_image' => optional($review->astrologer)->profile_image
+                            ? asset('storage/user/' . $review->astrologer->profile_image)
+                            : null,
+
+                        'rating' => (float)(optional($review->astrologer)->rating ?? 0),
+
+                        'rating_count' => (int)(optional($review->astrologer)->rating_count ?? 0),
+
+                    ],
+
+                    'rating' => (int)$review->rating,
+
+                    'review' => $review->review,
+
+                    'created_at' => $review->created_at->format('d M Y h:i A'),
+
+                    'updated_at' => $review->updated_at->format('d M Y h:i A'),
+
+                ];
+
+            });
+
+        DB::commit();
+
+        return response()->json([
+
+            'status' => true,
+
+            'message' => 'Profile updated successfully',
+
+            'user' => [
+
+                'id' => $user->id,
+
+                'code' => $user->code,
+
+                'username' => $user->username,
+
+                'name' => $user->name,
+
+                'email' => $user->email,
+
+                'mobile' => $user->mobile,
+
+                'country_code' => $user->country_code,
+
+                'profile_image' => $user->profile_image
+                    ? asset('storage/user/' . $user->profile_image)
+                    : null,
+
+                'gender' => $user->gender,
+
+                'dob' => $user->dob,
+
+                'birth_time' => $user->birth_time,
+
+                'birth_place' => $user->birth_place,
+
+                'marital_status' => $user->marital_status,
+
+                'occupation' => $user->occupation,
+
+                'about' => $user->about,
+
+                'address' => $user->address,
+
+                'pincode' => $user->pincode,
+
+                'status' => (int) $user->status,
+
+                'is_online' => (int) $user->is_online,
+
+            ],
+
+            'wallet' => [
+
+                'balance' => (float) ($user->wallet->balance ?? 0),
+
+                'total_added' => (float) ($user->wallet->total_added ?? 0),
+
+                'total_spent' => (float) ($user->wallet->total_spent ?? 0),
+
+                'last_recharge_amount' => (float) ($user->wallet->last_recharge_amount ?? 0),
+
+                'last_recharge_at' => $user->wallet->last_recharge_at,
+
+            ],
+
+            'reviews' => $reviews,
+
+        ]);
+
+        } catch (\Throwable $e) {
+
+            DB::rollBack();
 
             \Log::error('Profile Update Error', [
+
                 'message' => $e->getMessage(),
+
                 'file' => $e->getFile(),
+
                 'line' => $e->getLine(),
+
                 'trace' => $e->getTraceAsString(),
+
             ]);
 
             return response()->json([
+
                 'status' => false,
+
                 'message' => 'Failed to update profile',
+
                 'error' => $e->getMessage(),
+
             ], 500);
+
         }
     }
 

@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Wallet;
 use App\Models\WalletRecharge;
+use App\Models\AiChatSession;
+use App\Models\AiChatMessage;
+use App\Models\AiChatTransaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,6 +34,110 @@ class WalletApiController extends Controller
                 'last_recharge_at' => $wallet->last_recharge_at,
             ]
         ]);
+    }
+
+    public function chatAnalysis(Request $request)
+    {
+        $user = auth()->user();
+
+        $sessions = AiChatSession::with([
+                'astrologer:id,name,slug',
+                'expertise:id,ai_astrologer_id,name,slug',
+                'messages:id,session_id,sender',
+                'transactions:id,session_id,amount,type'
+            ])
+            ->where('user_id', $user->id)
+            ->latest('last_message_at')
+            ->paginate(10);
+
+        $history = $sessions->getCollection()->map(function ($session) {
+
+            $questionCount = $session->messages
+                ->where('sender', 'user')
+                ->count();
+
+            $replyCount = $session->messages
+                ->where('sender', 'assistant')
+                ->count();
+
+            $deducted = $session->transactions
+                ->where('type', 'debit')
+                ->sum('amount');
+
+            return [
+
+                'session_id' => $session->id,
+
+                'astrologer' => [
+
+                    'id' => $session->astrologer?->id,
+
+                    'name' => $session->astrologer?->name,
+
+                    'slug' => $session->astrologer?->slug,
+
+                ],
+
+                'expertise' => [
+
+                    'id' => $session->expertise?->id,
+
+                    'name' => $session->expertise?->name,
+
+                    'slug' => $session->expertise?->slug,
+
+                ],
+
+                'questions_asked' => $questionCount,
+
+                'assistant_replies' => $replyCount,
+
+                'free_messages' => $session->free_messages_used,
+
+                'paid_messages' => $session->paid_messages,
+
+                'total_messages' => $questionCount + $replyCount,
+
+                'total_deducted' => (float)$deducted,
+
+                'session_amount' => (float)$session->total_amount,
+
+                'started_at' => optional($session->started_at)
+                    ->format('d M Y h:i A'),
+
+                'last_message_at' => optional($session->last_message_at)
+                    ->format('d M Y h:i A'),
+
+                'duration' => $session->started_at && $session->last_message_at
+                    ? $session->started_at->diffForHumans($session->last_message_at, true)
+                    : null,
+
+            ];
+
+        });
+
+        return response()->json([
+
+            'status' => true,
+
+            'message' => 'Chat history fetched successfully',
+
+            'history' => $history,
+
+            'pagination' => [
+
+                'current_page' => $sessions->currentPage(),
+
+                'last_page' => $sessions->lastPage(),
+
+                'per_page' => $sessions->perPage(),
+
+                'total' => $sessions->total(),
+
+            ]
+
+        ]);
+
     }
 
     public function recharge(Request $request)
