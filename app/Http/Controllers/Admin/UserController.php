@@ -7,6 +7,11 @@ use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
 use App\Models\CallSession;
+use App\Models\AiChatSession;
+use App\Models\AiChatMessage;
+use App\Models\AiChatTransaction;
+use App\Models\AiAstrologer;
+use App\Models\AiAstrologerExpertise;
 use App\Models\ChatSession;
 use App\Models\Review;
 use App\Models\Country;
@@ -306,44 +311,97 @@ class UserController extends AdminController
 
     public function getView(Request $request, $id)
     {
-        $user = User::with(['wallet', 'reviews.astrologer:id,name,code'])
+        $user = User::with([
+            'wallet',
+            'reviews.astrologer:id,name,code'
+        ])
             ->where('type', 'user')
             ->findOrFail($id);
 
         /* ================= CALL SUMMARY ================= */
+
         $callSummary = DB::table('call_sessions')
             ->where('user_id', $id)
             ->where('status', 'completed')
-            ->selectRaw('
+            ->selectRaw("
                 COALESCE(SUM(amount),0) as total_amount,
                 COALESCE(SUM(duration),0) as total_duration
-            ')
+            ")
             ->first();
 
-        /* ================= CHAT SUMMARY ================= */
-        $chatSummary = DB::table('chat_sessions')
+        /* ================= AI CHAT SUMMARY ================= */
+
+        $aiChatSummary = DB::table('ai_chat_sessions')
             ->where('user_id', $id)
-            ->where('status', 'completed')
-            ->selectRaw('
-                COALESCE(SUM(amount),0) as total_amount,
-                COALESCE(SUM(duration),0) as total_duration
-            ')
+            ->selectRaw("
+                COUNT(*) as total_sessions,
+                COALESCE(SUM(free_messages_used),0) as free_questions,
+                COALESCE(SUM(paid_messages),0) as paid_questions,
+                COALESCE(SUM(total_amount),0) as total_amount
+            ")
             ->first();
 
-        /* ================= INTERACTION HISTORY ================= */
-        $chatHistory = DB::table('chat_sessions as cs')
-            ->join('users as a', 'a.id', '=', 'cs.astrologer_id')
-            ->where('cs.user_id', $id)
+        $totalQuestions =
+            ($aiChatSummary->free_questions ?? 0)
+            +
+            ($aiChatSummary->paid_questions ?? 0);
+
+        $totalReplies = DB::table('ai_chat_messages as m')
+            ->join('ai_chat_sessions as s', 's.id', '=', 'm.session_id')
+            ->where('s.user_id', $id)
+            ->where('m.sender', 'assistant')
+            ->count();
+
+        $lastChat = DB::table('ai_chat_messages as m')
+            ->join('ai_chat_sessions as s', 's.id', '=', 'm.session_id')
+            ->where('s.user_id', $id)
+            ->latest('m.created_at')
+            ->value('m.created_at');
+
+        /* ================= AI CHAT HISTORY ================= */
+
+        $chatHistory = DB::table('ai_chat_sessions as s')
+            ->join('ai_astrologers as a', 'a.id', '=', 's.astrologer_id')
+            ->join('ai_astrologer_expertises as e', 'e.id', '=', 's.expertise_id')
             ->select([
-                DB::raw("'CHAT' as type"),
-                'a.code as astrologer_code',
+                DB::raw("'AI CHAT' as type"),
+                'a.slug as astrologer_code',
                 'a.name as astrologer_name',
-                'cs.started_at',
-                'cs.ended_at',
-                'cs.duration',
-                'cs.amount',
-                'cs.status',
-            ]);
+                's.started_at',
+                's.last_message_at as ended_at',
+                DB::raw("0 as duration"),
+                's.total_amount as amount',
+                DB::raw("'completed' as status"),
+            ])
+            ->where('s.user_id', $id);
+
+        $aiChatHistory = AiChatSession::with([
+
+            'astrologer:id,name,image',
+
+            'expertise:id,name',
+
+            'messages' => function ($q) {
+
+                $q->select(
+                        'id',
+                        'session_id',
+                        'sender',
+                        'message',
+                        'charged_amount',
+                        'is_free',
+                        'created_at'
+                    )
+                    ->orderByDesc('id');
+
+            }
+
+        ])
+        ->where('user_id', $id)
+        ->latest('last_message_at')
+        ->get();
+
+        /* ================= CALL HISTORY ================= */
 
         $callHistory = DB::table('call_sessions as cls')
             ->join('users as a', 'a.id', '=', 'cls.astrologer_id')
@@ -359,23 +417,64 @@ class UserController extends AdminController
                 'cls.status',
             ]);
 
+        /* ================= MERGE HISTORY ================= */
+
         $interactionHistory = $chatHistory
             ->unionAll($callHistory)
             ->orderByDesc('started_at')
             ->get();
 
+        /* ================= LAST 10 AI TRANSACTIONS ================= */
+
+        $aiTransactions = DB::table('ai_chat_transactions as t')
+            ->join('ai_chat_sessions as s', 's.id', '=', 't.session_id')
+            ->join('ai_astrologers as a', 'a.id', '=', 's.astrologer_id')
+            ->join('ai_astrologer_expertises as e', 'e.id', '=', 's.expertise_id')
+            ->where('t.user_id', $id)
+            ->select(
+                't.*',
+                'a.name as astrologer_name',
+                'e.name as expertise_name'
+            )
+            ->latest()
+            ->take(10)
+            ->get();
+
+        /* ================= LAST 3 QUESTIONS ================= */
+
+        $lastQuestions = DB::table('ai_chat_messages as m')
+            ->join('ai_chat_sessions as s', 's.id', '=', 'm.session_id')
+            ->where('s.user_id', $id)
+            ->where('m.sender', 'user')
+            ->latest('m.id')
+            ->take(3)
+            ->get();
+
+        /* ================= LAST 3 ANSWERS ================= */
+
+        $lastAnswers = DB::table('ai_chat_messages as m')
+            ->join('ai_chat_sessions as s', 's.id', '=', 'm.session_id')
+            ->where('s.user_id', $id)
+            ->where('m.sender', 'assistant')
+            ->latest('m.id')
+            ->take(3)
+            ->get();
+
         /* ================= RECHARGE HISTORY ================= */
+
         $rechargeHistory = DB::table('wallet_recharges')
             ->where('wallet_id', optional($user->wallet)->id)
             ->orderByDesc('recharged_at')
             ->get();
 
         /* ================= PROFILE IMAGE ================= */
+
         $user->profile_image_url = $user->profile_image
             ? asset("storage/user/{$user->profile_image}")
             : asset('default-user.png');
 
-        /* ================= REVIEWS GIVEN BY USER ================= */
+        /* ================= LATEST REVIEWS ================= */
+
         $latest_reviews = Review::where('user_id', $id)
             ->with('astrologer:id,name,code')
             ->latest()
@@ -385,8 +484,15 @@ class UserController extends AdminController
         return view('admin.users.view', compact(
             'user',
             'callSummary',
-            'chatSummary',
+            'aiChatSummary',
+            'totalQuestions',
+            'totalReplies',
+            'lastChat',
             'interactionHistory',
+            'aiTransactions',
+            'lastQuestions',
+            'lastAnswers',
+            'aiChatHistory',
             'rechargeHistory',
             'latest_reviews'
         ));
