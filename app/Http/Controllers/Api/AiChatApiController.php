@@ -50,12 +50,17 @@ class AiChatApiController extends Controller
     public function history($sessionId, Request $request): JsonResponse
     {
         $session = AiChatSession::with([
-                'astrologer',
-                'expertise',
-                'messages' => fn($query) => $query->orderBy('id', 'asc'),
-            ])
-            ->where('user_id', $request->user()->id)
-            ->findOrFail($sessionId);
+            'astrologer',
+            'expertise',
+            'messages' => fn($query) => $query->orderBy('id', 'asc'),
+        ])
+        ->where('user_id', $request->user()->id)
+        ->findOrFail($sessionId);
+
+        $session->messages->makeVisible([
+            'created_at',
+            'updated_at',
+        ]);
 
         return response()->json([
             'status' => true,
@@ -469,6 +474,8 @@ class AiChatApiController extends Controller
                 'chat_active_since' => $session->chat_active_since,
                 'chat_last_seen_at' => $session->chat_last_seen_at,
                 'chat_stopped' => $chatStoppedAfterFree,
+                'created_at' => now()->toDateTimeString(),
+                'updated_at' => now()->toDateTimeString(),
                 // 'remaining_questions' => $this->getRemainingQuestions($session),
             ];
 
