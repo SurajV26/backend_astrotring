@@ -610,6 +610,42 @@ class AiChatApiController extends Controller
             );
         }
 
+        /*
+        * Check exact paid-time expiry.
+        *
+        * chat_active_since = actual paid chat start time
+        * chat_billed_minutes = already funded minutes
+        * wallet balance = additional minutes still affordable
+        */
+        $activeSince = Carbon::parse($session->chat_active_since);
+
+        $walletBalance = $this->getWalletBalance($user);
+
+        $billedMinutes = (int) $session->chat_billed_minutes;
+
+        $remainingWalletMinutes = (int) floor(
+            $walletBalance / $pricePerMinute
+        );
+
+        $totalFundedMinutes = $billedMinutes + $remainingWalletMinutes;
+
+        $paidUntil = $activeSince->copy()->addMinutes(
+            $totalFundedMinutes
+        );
+
+        if (now()->greaterThanOrEqualTo($paidUntil)) {
+            $session->update([
+                'chat_active_since' => null,
+                'chat_last_seen_at' => $paidUntil,
+            ]);
+
+            return $this->errorResponse(
+                'Your paid chat time has ended. Please recharge your wallet to continue chatting.',
+                422,
+                'insufficient_balance'
+            );
+        }
+
         // Automatic wallet billing is handled only by the Scheduler/cron job.
         return null;
     }
@@ -639,6 +675,36 @@ class AiChatApiController extends Controller
             $isActive = $session->status === 'active'
                 && $session->chat_active_since
                 && !$session->chat_last_seen_at;
+
+            if ($isActive) {
+                $activeSince = Carbon::parse($session->chat_active_since);
+
+                $pricePerMinute = $this->getChatPricePerMinute($session);
+                $walletBalance = $this->getWalletBalance($request->user());
+
+                $billedMinutes = (int) $session->chat_billed_minutes;
+
+                $remainingWalletMinutes = $pricePerMinute > 0
+                    ? (int) floor($walletBalance / $pricePerMinute)
+                    : 0;
+
+                $totalFundedMinutes = $billedMinutes + $remainingWalletMinutes;
+
+                $paidUntil = $activeSince->copy()->addMinutes(
+                    $totalFundedMinutes
+                );
+
+                if (now()->greaterThanOrEqualTo($paidUntil)) {
+                    $stoppedAt = $paidUntil;
+
+                    $session->update([
+                        'chat_active_since' => null,
+                        'chat_last_seen_at' => $stoppedAt,
+                    ]);
+
+                    $isActive = false;
+                }
+            }
 
             return response()->json([
                 'status' => true,
@@ -997,14 +1063,41 @@ class AiChatApiController extends Controller
 
         $pricePerMinute = $this->getChatPricePerMinute($session);
 
+        $walletBalance = $this->getWalletBalance($request->user());
+
         $isSessionClosed = $session->status !== 'active';
 
         $isRunning = !$isSessionClosed
             && (bool) ($session->chat_active_since && !$session->chat_last_seen_at);
 
-        $chatStopped = !$isRunning;
+        if ($isRunning) {
+            $activeSince = Carbon::parse($session->chat_active_since);
 
-        $walletBalance = $this->getWalletBalance($request->user());
+            $billedMinutes = (int) $session->chat_billed_minutes;
+
+            $remainingWalletMinutes = $pricePerMinute > 0
+                ? (int) floor($walletBalance / $pricePerMinute)
+                : 0;
+
+            $totalFundedMinutes = $billedMinutes + $remainingWalletMinutes;
+
+            $paidUntil = $activeSince->copy()->addMinutes(
+                $totalFundedMinutes
+            );
+
+            if (now()->greaterThanOrEqualTo($paidUntil)) {
+                $stoppedAt = $paidUntil;
+
+                $session->update([
+                    'chat_active_since' => null,
+                    'chat_last_seen_at' => $stoppedAt,
+                ]);
+
+                $isRunning = false;
+            }
+        }
+
+        $chatStopped = !$isRunning;
 
         $availablePaidMinutes = $pricePerMinute > 0
             ? (int) floor($walletBalance / $pricePerMinute)
