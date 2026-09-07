@@ -15,6 +15,10 @@ class AiChatSession extends Model
         'user_id',
         'astrologer_id',
         'expertise_id',
+        'chat_active_since',
+        'chat_last_seen_at',
+        'chat_billed_minutes',
+        'chat_free_used',
         'paid_messages',
         'total_amount',
         'started_at',
@@ -24,6 +28,9 @@ class AiChatSession extends Model
     ];
 
     protected $casts = [
+        'chat_active_since' => 'datetime',
+        'chat_last_seen_at' => 'datetime',
+        'chat_free_used' => 'boolean',
         'total_amount' => 'decimal:2',
         'started_at' => 'datetime',
         'last_message_at' => 'datetime',

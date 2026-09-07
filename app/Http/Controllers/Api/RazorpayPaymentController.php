@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 
 class RazorpayPaymentController extends Controller
 {
-    protected $isTest = true; // true = test | false = live
+    protected $isTest = false; // true = test | false = live
 
     public function createOrder(Request $request)
     {
