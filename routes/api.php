@@ -175,8 +175,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::prefix('ai-chat')->group(function () {
                 // Route::get('/topics', [AiChatApiController::class, 'topics']);
                 Route::post('/start-session', [AiChatApiController::class, 'startSession']);
+                Route::post('/start-chat/{sessionId}', [AiChatApiController::class, 'startChat']);
+                Route::post('/stop-chat/{sessionId}', [AiChatApiController::class, 'stopChat']);
                 Route::post('/send-message', [AiChatApiController::class, 'sendMessage']);
                 Route::get('/sessions', [AiChatApiController::class, 'sessions']);
+                Route::get('/{sessionId}/status', [AiChatApiController::class, 'chatStatus']);
                 Route::get('/history/{sessionId}', [AiChatApiController::class, 'history']);
                 Route::post('/close-session/{sessionId}', [AiChatApiController::class, 'closeSession']);
             });

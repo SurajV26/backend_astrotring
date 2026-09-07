@@ -17,6 +17,10 @@ return new class extends Migration
             $table->unsignedBigInteger('user_id');
             $table->unsignedBigInteger('astrologer_id');
             $table->unsignedBigInteger('expertise_id');
+            $table->timestamp('chat_active_since')->nullable();
+            $table->timestamp('chat_last_seen_at')->nullable();
+            $table->unsignedInteger('chat_billed_minutes')->default(0);
+            $table->boolean('chat_free_used')->default(false);
             $table->integer('free_messages_used')->default(0);
             $table->integer('paid_messages')->default(0);
             $table->decimal('total_amount', 10, 2)->default(0);

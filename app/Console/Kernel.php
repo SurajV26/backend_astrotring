@@ -11,6 +11,7 @@ class Kernel extends ConsoleKernel
     protected $commands = [
         \App\Console\Commands\GenerateClientPayouts::class,
         \App\Console\Commands\DeleteScheduledFiles::class,
+        \App\Console\Commands\ProcessAiChatBilling::class,
     ];
 
     /**
@@ -20,6 +21,10 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('payout:client-generate')->dailyAt('00:00');
         $schedule->command('app:delete-scheduled-files')->daily();
+
+        $schedule->command('ai-chat:process-billing')
+            ->everyMinute()
+            ->withoutOverlapping();
     }
 
     /**

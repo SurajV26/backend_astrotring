@@ -13,13 +13,19 @@ use App\Models\AiAstrologerExpertise;
 use App\Models\AiAstrologerExpertiseQuestion;
 use App\Models\AiChatTransaction;
 use App\Services\OpenAiService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class AiChatApiController extends Controller
 {
+    private const FREE_MESSAGES_ALLOWED = 1;
+    private const MINIMUM_CHAT_START_BALANCE = 80.00;
+    private const CHAT_IDLE_TIMEOUT_SECONDS = 180;
+
     private OpenAiService $openAiService;
 
     public function __construct(OpenAiService $openAiService)
@@ -127,10 +133,17 @@ class AiChatApiController extends Controller
 
     private function resumeSession(AiChatSession $session): JsonResponse
     {
+        // Keep the permanent session/history intact.
+        // Billing starts only through startChat().
+        $user = User::find($session->user_id);
+        $freeMessagesUsed = $user ? $this->countUserFreeMessages($user) : (int) $session->free_messages_used;
+        $freeLimit = $this->getFreeMessageLimit();
+
         $session->update([
             'status' => 'active',
             'closed_at' => null,
             'last_message_at' => now(),
+            'chat_free_used' => $freeMessagesUsed >= $freeLimit,
         ]);
 
         $session->refresh()->load(['astrologer', 'expertise', 'messages']);
@@ -146,6 +159,9 @@ class AiChatApiController extends Controller
 
     private function createNewSession(User $user, AiAstrologer $astrologer, AiAstrologerExpertise $expertise): JsonResponse
     {
+        $freeMessagesUsed = $this->countUserFreeMessages($user);
+        $freeLimit = $this->getFreeMessageLimit();
+
         $session = AiChatSession::create([
             'user_id' => $user->id,
             'astrologer_id' => $astrologer->id,
@@ -155,6 +171,10 @@ class AiChatApiController extends Controller
             'started_at' => now(),
             'last_message_at' => now(),
             'status' => 'active',
+            'chat_active_since' => null,
+            'chat_last_seen_at' => null,
+            'chat_billed_minutes' => 0,
+            'chat_free_used' => $freeMessagesUsed >= $freeLimit,
         ]);
 
         $session->load(['astrologer', 'expertise']);
@@ -222,15 +242,72 @@ class AiChatApiController extends Controller
         DB::beginTransaction();
 
         try {
-            $user = $request->user();
+            $user = User::where('id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
             $session = AiChatSession::with(['astrologer', 'expertise', 'messages'])
                 ->where('user_id', $user->id)
+                ->lockForUpdate()
                 ->findOrFail($request->session_id);
 
             if ($session->status !== 'active') {
                 DB::rollBack();
-                return $this->errorResponse('This chat session is closed.', 422, 'session_closed');
+
+                return $this->errorResponse(
+                    'Your chat session is closed.',
+                    422,
+                    'session_closed'
+                );
+            }
+
+            /*
+             * Do not allow a message to sneak in after the 3-minute
+             * inactivity deadline when the scheduler has not run yet.
+             * Only USER activity resets this timer.
+             */
+            if ($session->chat_active_since && !$session->chat_last_seen_at) {
+                $lastUserMessage = AiChatMessage::where('session_id', $session->id)
+                    ->where('sender', 'user')
+                    ->latest('id')
+                    ->first();
+
+                $lastUserActivityAt = $lastUserMessage?->created_at
+                    ? Carbon::parse($lastUserMessage->created_at)
+                    : Carbon::parse($session->chat_active_since);
+
+                // Ignore messages from an older billing period.
+                $activeSince = Carbon::parse($session->chat_active_since);
+                if ($lastUserActivityAt->lt($activeSince)) {
+                    $lastUserActivityAt = $activeSince->copy();
+                }
+
+                if ($lastUserActivityAt->copy()->addSeconds(180)->lte(now())) {
+                    $closedAt = now();
+
+                    $session->update([
+                        'status' => 'closed',
+                        'closed_at' => $closedAt,
+                        'chat_active_since' => null,
+                        'chat_last_seen_at' => $closedAt,
+                    ]);
+
+                    DB::commit();
+
+                    return response()->json([
+                        'status' => false,
+                        'chat_started' => true,
+                        'chat_active' => false,
+                        'chat_stopped' => true,
+                        'session_closed' => true,
+                        'session_id' => $session->id,
+                        'type' => 'session_closed',
+                        'message' => 'Your chat session was automatically closed because there was no message from you for 3 minutes.',
+                        'chat_active_since' => null,
+                        'chat_last_seen_at' => $closedAt,
+                        'session_closed_at' => $closedAt,
+                    ], 422);
+                }
             }
 
             $isDatabaseQuestion = $request->filled('question_id');
@@ -244,30 +321,17 @@ class AiChatApiController extends Controller
                 return $this->errorResponse($failure, 422);
             }
 
-            $freeMessages = (int) config('services.ai_chat.free_messages', 0);
-            
-            $userFreeUsed = AiChatMessage::whereHas('session', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            })
-            ->where('sender', 'user')
-            ->where('is_free', true)
-            ->count();
-            
-            $isFree = $userFreeUsed < $freeMessages;
-            $chatPrice = $isFree ? 0 : (float) config('services.ai_chat.price');
+            $freeLimit = $this->getFreeMessageLimit();
 
-            $wallet = null;
+            $freeMessagesUsed = $this->countUserFreeMessages($user);
+            $isFree = $freeMessagesUsed < $freeLimit;
 
             if (!$isFree) {
-                $wallet = $user->wallet;
+                $billingError = $this->checkChatBalance($user, $session);
 
-                if (!$wallet || $wallet->balance < $chatPrice) {
+                if ($billingError) {
                     DB::rollBack();
-                    return $this->errorResponse(
-                        'Insufficient wallet balance. Please recharge your wallet.',
-                        422,
-                        'insufficient_balance'
-                    );
+                    return $billingError;
                 }
             }
 
@@ -276,22 +340,10 @@ class AiChatApiController extends Controller
                 'question_id' => $questionId,
                 'sender' => 'user',
                 'message' => $currentQuestion,
-                'charged_amount' => $chatPrice,
+                'charged_amount' => 0,
                 'is_free' => $isFree,
                 'model' => 'gpt-4.1-mini',
             ]);
-
-            if (!$isFree) {
-                $this->debitWallet($wallet, $user, $session, $userMessage, $chatPrice);
-            }
-
-            $isFree
-                ? $session->increment('free_messages_used')
-                : $session->increment('paid_messages');
-
-            if (!$isFree) {
-                $session->increment('total_amount', $chatPrice);
-            }
 
             $systemPrompt = $isDatabaseQuestion
                 ? $this->buildQuestionPrompt($session)
@@ -340,15 +392,90 @@ class AiChatApiController extends Controller
                 'model' => 'gpt-4.1-mini',
             ]);
 
+            $chatStoppedAfterFree = false;
+            $billingWarning = null;
+
+            if ($isFree) {
+                $freeMessagesUsedAfter = $freeMessagesUsed + 1;
+
+                $updateData = [
+                    'free_messages_used' => $freeMessagesUsedAfter,
+                    'chat_free_used' => $freeMessagesUsedAfter >= $freeLimit,
+                ];
+
+                if (
+                    $freeMessagesUsedAfter >= $freeLimit
+                    && !$session->chat_active_since
+                ) {
+                    $pricePerMinute = $this->getChatPricePerMinute($session);
+
+                    if ($pricePerMinute <= 0) {
+                        DB::rollBack();
+
+                        return $this->errorResponse(
+                            'Chat is temporarily unavailable for this astrologer.',
+                            422,
+                            'invalid_chat_price'
+                        );
+                    }
+
+                    $wallet = $user->wallet()
+                        ->lockForUpdate()
+                        ->first();
+
+                    $walletBalance = $wallet
+                        ? round((float) $wallet->balance, 2)
+                        : 0.0;
+
+                    if (!$wallet || $walletBalance < $pricePerMinute) {
+                        $updateData['chat_active_since'] = null;
+                        $updateData['chat_last_seen_at'] = now();
+                        $updateData['chat_billed_minutes'] = 0;
+                        $chatStoppedAfterFree = true;
+                        $billingWarning = 'Your free message has been delivered, but your wallet balance cannot fund the next paid minute. Please recharge your wallet to continue chatting.';
+                    } else {
+                        // First paid minute is prepaid immediately after the free response succeeds.
+                        $session->update([
+                            'chat_billed_minutes' => 0,
+                        ]);
+
+                        $this->debitChatMinutes(
+                            $user,
+                            $session,
+                            $wallet,
+                            1,
+                            'AI Astrology Chat'
+                        );
+
+                        $updateData['chat_active_since'] = now();
+                        $updateData['chat_last_seen_at'] = null;
+                        $updateData['chat_billed_minutes'] = 1;
+                    }
+                }
+
+                $session->update($updateData);
+            }
+
             $session->update(['last_message_at' => now()]);
 
             DB::commit();
 
+            $session->refresh();
+
             $response = [
                 'status' => true,
                 'reply' => $reply,
+                'chat_free_used' => (bool) $session->chat_free_used,
+                'chat_active_since' => $session->chat_active_since,
+                'chat_last_seen_at' => $session->chat_last_seen_at,
+                'chat_stopped' => $chatStoppedAfterFree,
                 // 'remaining_questions' => $this->getRemainingQuestions($session),
             ];
+
+            if ($billingWarning) {
+                $response['billing_message'] = $billingWarning;
+                $response['billing_type'] = 'insufficient_balance';
+            }
 
             // Only exposed when APP_DEBUG=true in .env — never in production.
             if (config('app.debug')) {
@@ -362,6 +489,914 @@ class AiChatApiController extends Controller
 
             Log::error('AI_CHAT_ERROR', [
                 'user_id' => auth()->id(),
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return $this->errorResponse(
+                'Something went wrong. Please try again.',
+                500,
+                'server_error'
+            );
+        }
+    }
+
+    private function getFreeMessageLimit(): int
+    {
+        return max(
+            0,
+            (int) config(
+                'services.ai_chat.free_messages',
+                env('AI_CHAT_FREE_MESSAGES', self::FREE_MESSAGES_ALLOWED)
+            )
+        );
+    }
+
+    private function getChatPricePerMinute(AiChatSession $session): float
+    {
+        return max(
+            0,
+            (float) optional($session->astrologer)->chat_price
+        );
+    }
+
+    private function getWalletBalance(User $user): float
+    {
+        return round(
+            (float) optional($user->wallet)->balance,
+            2
+        );
+    }
+
+
+    private function debitChatMinutes(
+        User $user,
+        AiChatSession $session,
+        $wallet,
+        int $minutes,
+        string $remark = 'AI Astrology Chat'
+    ): float {
+        if ($minutes <= 0) {
+            return 0.0;
+        }
+
+        $pricePerMinute = $this->getChatPricePerMinute($session);
+
+        if ($pricePerMinute <= 0) {
+            throw new \RuntimeException('Invalid astrologer chat price.');
+        }
+
+        $minutes = max(0, $minutes);
+        $amount = round($minutes * $pricePerMinute, 2);
+        $before = round((float) $wallet->balance, 2);
+
+        if ($before < $amount) {
+            throw new \RuntimeException('Insufficient wallet balance.');
+        }
+
+        $after = round($before - $amount, 2);
+
+        $wallet->update([
+            'balance' => $after,
+            'total_spent' => (float) $wallet->total_spent + $amount,
+        ]);
+
+        AiChatTransaction::create([
+            'user_id' => $user->id,
+            'session_id' => $session->id,
+            'message_id' => null,
+            'amount' => $amount,
+            'balance_before' => $before,
+            'balance_after' => $after,
+            'type' => 'debit',
+            'remark' => $remark . " - {$minutes} minute(s)",
+        ]);
+
+        $session->update([
+            'chat_billed_minutes' => (int) $session->chat_billed_minutes + $minutes,
+            'total_amount' => (float) $session->total_amount + $amount,
+        ]);
+
+        Log::info('AI_CHAT_BILLING_DEBIT', [
+            'session_id' => $session->id,
+            'user_id' => $user->id,
+            'minutes' => $minutes,
+            'amount' => $amount,
+            'balance_before' => $before,
+            'balance_after' => $after,
+        ]);
+
+        return $amount;
+    }
+
+    private function checkChatBalance(User $user, AiChatSession $session): ?JsonResponse
+    {
+        if (!$session->chat_active_since || $session->chat_last_seen_at) {
+            return $this->errorResponse(
+                'Your chat has ended. Please start the chat again to continue.',
+                422,
+                'chat_not_active'
+            );
+        }
+
+        $pricePerMinute = $this->getChatPricePerMinute($session);
+
+        if ($pricePerMinute <= 0) {
+            return $this->errorResponse(
+                'Chat is temporarily unavailable for this astrologer.',
+                422,
+                'invalid_chat_price'
+            );
+        }
+
+        // Automatic wallet billing is handled only by the Scheduler/cron job.
+        return null;
+    }
+
+    private function countUserFreeMessages(User $user): int
+    {
+        return AiChatMessage::whereHas('session', function ($query) use ($user) {
+            $query->where('user_id', $user->id);
+        })
+            ->where('sender', 'user')
+            ->where('is_free', true)
+            ->count();
+    }
+
+
+    /**
+     * Heartbeat endpoint. Frontend calls this every few seconds while the
+     * chat page is open. Billing is performed server-side at minute boundaries.
+     */
+    public function heartbeat($sessionId, Request $request): JsonResponse
+    {
+        try {
+            $session = AiChatSession::with('astrologer')
+                ->where('user_id', $request->user()->id)
+                ->findOrFail($sessionId);
+
+            $isActive = $session->status === 'active'
+                && $session->chat_active_since
+                && !$session->chat_last_seen_at;
+
+            return response()->json([
+                'status' => true,
+                'chat_active' => (bool) $isActive,
+                'chat_stopped' => !$isActive && (bool) $session->chat_last_seen_at,
+                'session_id' => $session->id,
+                'chat_active_since' => $session->chat_active_since,
+                'chat_last_seen_at' => $session->chat_last_seen_at,
+                'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+                'total_amount' => (float) $session->total_amount,
+                'wallet_balance' => $this->getWalletBalance($request->user()),
+                'price_per_minute' => $this->getChatPricePerMinute($session),
+            ]);
+        } catch (Throwable $e) {
+            Log::error('AI_CHAT_HEARTBEAT_ERROR', [
+                'user_id' => $request->user()->id ?? null,
+                'session_id' => $sessionId,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return $this->errorResponse('Something went wrong. Please try again.', 500, 'server_error');
+        }
+    }
+
+    /**
+     * Laravel Scheduler billing authority.
+     * First paid minute is prepaid at start; subsequent minutes are prepaid
+     * at minute boundaries. Wallet can never become negative.
+     */
+    /**
+     * Laravel Scheduler billing authority.
+     *
+     * - Billing is processed every minute.
+     * - User inactivity is measured from the last USER message.
+     * - If there is no user message for 3 minutes, the chat is automatically closed.
+     * - Auto-close settles only the time actually used, up to the 3-minute
+     *   inactivity deadline. It never charges beyond that deadline.
+     */
+    public function processActiveChatBilling(): array
+    {
+        $stats = [
+            'sessions_checked' => 0,
+            'sessions_billed' => 0,
+            'sessions_stopped' => 0,
+            'sessions_auto_closed' => 0,
+            'minutes_charged' => 0,
+            'amount_charged' => 0.0,
+            'errors' => 0,
+        ];
+
+        $idleTimeoutSeconds = self::CHAT_IDLE_TIMEOUT_SECONDS;
+
+        Log::info('AI_CHAT_BILLING_RUN_STARTED');
+
+        AiChatSession::query()
+            ->where('status', 'active')
+            ->whereNotNull('chat_active_since')
+            ->whereNull('chat_last_seen_at')
+            ->orderBy('id')
+            ->chunkById(100, function ($candidates) use (&$stats, $idleTimeoutSeconds) {
+                foreach ($candidates as $candidate) {
+                    $stats['sessions_checked']++;
+
+                    try {
+                        $result = DB::transaction(function () use ($candidate, $idleTimeoutSeconds) {
+                            $session = AiChatSession::with('astrologer')
+                                ->whereKey($candidate->id)
+                                ->where('status', 'active')
+                                ->whereNotNull('chat_active_since')
+                                ->whereNull('chat_last_seen_at')
+                                ->lockForUpdate()
+                                ->first();
+
+                            if (!$session) {
+                                return null;
+                            }
+
+                            $user = User::whereKey($session->user_id)
+                                ->lockForUpdate()
+                                ->first();
+
+                            $now = now();
+
+                            if (!$user) {
+                                $session->update([
+                                    'status' => 'closed',
+                                    'closed_at' => $now,
+                                    'chat_active_since' => null,
+                                    'chat_last_seen_at' => $now,
+                                ]);
+
+                                return [
+                                    'billed' => false,
+                                    'stopped' => true,
+                                    'auto_closed' => true,
+                                    'minutes' => 0,
+                                    'amount' => 0.0,
+                                ];
+                            }
+
+                            $price = $this->getChatPricePerMinute($session);
+
+                            if ($price <= 0) {
+                                $session->update([
+                                    'status' => 'closed',
+                                    'closed_at' => $now,
+                                    'chat_active_since' => null,
+                                    'chat_last_seen_at' => $now,
+                                ]);
+
+                                Log::warning('AI_CHAT_BILLING_INVALID_PRICE', [
+                                    'session_id' => $session->id,
+                                    'astrologer_id' => $session->astrologer_id,
+                                ]);
+
+                                return [
+                                    'billed' => false,
+                                    'stopped' => true,
+                                    'auto_closed' => true,
+                                    'minutes' => 0,
+                                    'amount' => 0.0,
+                                ];
+                            }
+
+                            $wallet = $user->wallet()->lockForUpdate()->first();
+
+                            if (!$wallet) {
+                                $session->update([
+                                    'status' => 'closed',
+                                    'closed_at' => $now,
+                                    'chat_active_since' => null,
+                                    'chat_last_seen_at' => $now,
+                                ]);
+
+                                return [
+                                    'billed' => false,
+                                    'stopped' => true,
+                                    'auto_closed' => true,
+                                    'minutes' => 0,
+                                    'amount' => 0.0,
+                                ];
+                            }
+
+                            $activeSince = $session->chat_active_since instanceof Carbon
+                                ? $session->chat_active_since->copy()
+                                : Carbon::parse($session->chat_active_since);
+
+                            /*
+                             * IMPORTANT:
+                             * Only USER messages reset the 3-minute inactivity timer.
+                             * Assistant messages, heartbeat and frontend polling do not.
+                             */
+                            $lastUserMessage = AiChatMessage::where('session_id', $session->id)
+                                ->where('sender', 'user')
+                                ->latest('id')
+                                ->first();
+
+                            $lastUserActivityAt = $lastUserMessage?->created_at
+                                ? Carbon::parse($lastUserMessage->created_at)
+                                : $activeSince;
+
+                            // A message from an older billing period must not
+                            // make a newly started chat expire immediately.
+                            if ($lastUserActivityAt->lt($activeSince)) {
+                                $lastUserActivityAt = $activeSince->copy();
+                            }
+
+                            $idleDeadline = $lastUserActivityAt->copy()
+                                ->addSeconds($idleTimeoutSeconds);
+
+                            $autoCloseDue = $now->greaterThanOrEqualTo($idleDeadline);
+
+                            /*
+                             * If auto-close is due, settle only up to the exact
+                             * 3-minute inactivity deadline. Never charge time
+                             * after that deadline.
+                             */
+                            $billingUntil = $autoCloseDue
+                                ? $idleDeadline
+                                : $now;
+
+                            $elapsedSeconds = max(
+                                0,
+                                $activeSince->diffInSeconds($billingUntil)
+                            );
+
+                            if ($autoCloseDue) {
+                                // At close time, charge completed minutes only.
+                                $requiredMinutes = max(
+                                    1,
+                                    (int) ceil($elapsedSeconds / 60)
+                                );
+                            } else {
+                                // First minute is prepaid. At each minute
+                                // boundary, fund the next minute.
+                                $requiredMinutes = (int) floor($elapsedSeconds / 60) + 1;
+                            }
+
+                            $billedMinutes = (int) $session->chat_billed_minutes;
+                            $minutesDue = max(
+                                0,
+                                $requiredMinutes - $billedMinutes
+                            );
+
+                            $minutesCharged = 0;
+                            $amountCharged = 0.0;
+
+                            if ($minutesDue > 0) {
+                                $balance = round((float) $wallet->balance, 2);
+                                $affordable = (int) floor($balance / $price);
+
+                                $minutesToCharge = min(
+                                    $minutesDue,
+                                    max(0, $affordable)
+                                );
+
+                                if ($minutesToCharge > 0) {
+                                    $amountCharged = $this->debitChatMinutes(
+                                        $user,
+                                        $session,
+                                        $wallet,
+                                        $minutesToCharge,
+                                        'AI Astrology Chat'
+                                    );
+
+                                    $minutesCharged = $minutesToCharge;
+                                }
+
+                                /*
+                                 * Not enough balance to fund all required minutes.
+                                 * Stop the billing period immediately.
+                                 */
+                                if ($minutesToCharge < $minutesDue) {
+                                    $session->update([
+                                        'chat_active_since' => null,
+                                        'chat_last_seen_at' => $now,
+                                    ]);
+
+                                    Log::warning('AI_CHAT_BILLING_STOPPED_INSUFFICIENT_BALANCE', [
+                                        'session_id' => $session->id,
+                                        'user_id' => $user->id,
+                                        'required_minutes' => $requiredMinutes,
+                                        'billed_minutes_before' => $billedMinutes,
+                                        'minutes_due' => $minutesDue,
+                                        'minutes_charged' => $minutesToCharge,
+                                        'wallet_balance' => round((float) $wallet->fresh()->balance, 2),
+                                        'price_per_minute' => $price,
+                                    ]);
+
+                                    return [
+                                        'billed' => $minutesCharged > 0,
+                                        'stopped' => true,
+                                        'auto_closed' => false,
+                                        'minutes' => $minutesCharged,
+                                        'amount' => $amountCharged,
+                                    ];
+                                }
+                            }
+
+                            /*
+                             * Three minutes without a USER message:
+                             * permanently close this chat session.
+                             *
+                             * The next status API call will return
+                             * "Your chat session is closed." instead of an
+                             * insufficient-balance message.
+                             */
+                            if ($autoCloseDue) {
+                                $session->update([
+                                    'status' => 'closed',
+                                    'closed_at' => $now,
+                                    'chat_active_since' => null,
+                                    'chat_last_seen_at' => $now,
+                                ]);
+
+                                Log::info('AI_CHAT_AUTO_CLOSED_INACTIVE', [
+                                    'session_id' => $session->id,
+                                    'user_id' => $user->id,
+                                    'inactive_for_seconds' => $lastUserActivityAt->diffInSeconds($now),
+                                    'idle_timeout_seconds' => $idleTimeoutSeconds,
+                                    'last_user_message_at' => $lastUserMessage?->created_at,
+                                    'minutes_charged' => $minutesCharged,
+                                    'amount_charged' => $amountCharged,
+                                ]);
+
+                                return [
+                                    'billed' => $minutesCharged > 0,
+                                    'stopped' => true,
+                                    'auto_closed' => true,
+                                    'minutes' => $minutesCharged,
+                                    'amount' => $amountCharged,
+                                ];
+                            }
+
+                            return [
+                                'billed' => $minutesCharged > 0,
+                                'stopped' => false,
+                                'auto_closed' => false,
+                                'minutes' => $minutesCharged,
+                                'amount' => $amountCharged,
+                            ];
+                        });
+
+                        if (!$result) {
+                            continue;
+                        }
+
+                        if ($result['billed']) {
+                            $stats['sessions_billed']++;
+                            $stats['minutes_charged'] += $result['minutes'];
+                            $stats['amount_charged'] += $result['amount'];
+                        }
+
+                        if ($result['stopped']) {
+                            $stats['sessions_stopped']++;
+                        }
+
+                        if ($result['auto_closed']) {
+                            $stats['sessions_auto_closed']++;
+                        }
+                    } catch (Throwable $e) {
+                        $stats['errors']++;
+
+                        Log::error('AI_CHAT_BILLING_SESSION_ERROR', [
+                            'session_id' => $candidate->id ?? null,
+                            'message' => $e->getMessage(),
+                            'file' => $e->getFile(),
+                            'line' => $e->getLine(),
+                        ]);
+                    }
+                }
+            });
+
+        $stats['amount_charged'] = round($stats['amount_charged'], 2);
+
+        Log::info('AI_CHAT_BILLING_RUN_FINISHED', $stats);
+
+        return $stats;
+    }
+
+    /**
+     * Frontend status endpoint.
+     *
+     * `status` means the API request succeeded.
+     * `chat_active` means the current chat billing period is running.
+     * `chat_stopped` means the current chat is not running.
+     * `session_closed` means the permanent chat session was auto/manual closed.
+     */
+    public function chatStatus($sessionId, Request $request): JsonResponse
+    {
+        $session = AiChatSession::with('astrologer')
+            ->where('user_id', $request->user()->id)
+            ->findOrFail($sessionId);
+
+        $pricePerMinute = $this->getChatPricePerMinute($session);
+
+        $isSessionClosed = $session->status !== 'active';
+
+        $isRunning = !$isSessionClosed
+            && (bool) ($session->chat_active_since && !$session->chat_last_seen_at);
+
+        $chatStopped = !$isRunning;
+
+        $walletBalance = $this->getWalletBalance($request->user());
+
+        $availablePaidMinutes = $pricePerMinute > 0
+            ? (int) floor($walletBalance / $pricePerMinute)
+            : 0;
+
+        $idleTimeoutSeconds = 180;
+        $lastUserMessage = AiChatMessage::where('session_id', $session->id)
+            ->where('sender', 'user')
+            ->latest('id')
+            ->first();
+
+        $lastUserActivityAt = null;
+        $autoCloseAt = null;
+        $idleRemainingSeconds = 0;
+
+        if ($isRunning) {
+            $lastUserActivityAt = $lastUserMessage?->created_at
+                ? Carbon::parse($lastUserMessage->created_at)
+                : Carbon::parse($session->chat_active_since);
+
+            // Ignore messages from an older billing period.
+            $activeSince = Carbon::parse($session->chat_active_since);
+            if ($lastUserActivityAt->lt($activeSince)) {
+                $lastUserActivityAt = $activeSince->copy();
+            }
+
+            $autoCloseAt = $lastUserActivityAt->copy()
+                ->addSeconds($idleTimeoutSeconds);
+
+            $idleRemainingSeconds = max(
+                0,
+                now()->diffInSeconds($autoCloseAt, false)
+            );
+        }
+
+        $payload = [
+            'status' => true,
+            'session_id' => $session->id,
+
+            // Clear frontend state flags.
+            'chat_started' => (bool) $session->chat_active_since,
+            'chat_active' => $isRunning,
+            'chat_stopped' => $chatStopped,
+            'session_closed' => $isSessionClosed,
+
+            'chat_active_since' => $session->chat_active_since,
+            'chat_last_seen_at' => $session->chat_last_seen_at,
+            'session_closed_at' => $session->closed_at,
+
+            'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+            'total_amount' => (float) $session->total_amount,
+            'price_per_minute' => $pricePerMinute,
+            'wallet_balance' => $walletBalance,
+            'available_paid_minutes' => $availablePaidMinutes,
+
+            'idle_timeout_seconds' => $idleTimeoutSeconds,
+            'last_user_message_at' => $lastUserActivityAt,
+            'auto_close_at' => $autoCloseAt,
+            'idle_remaining_seconds' => $idleRemainingSeconds,
+        ];
+
+        if ($isSessionClosed) {
+            $payload['type'] = 'session_closed';
+            $payload['message'] = 'Your chat session is closed.';
+        } elseif ($chatStopped) {
+            if ($pricePerMinute > 0 && $walletBalance < $pricePerMinute) {
+                $payload['type'] = 'insufficient_balance';
+                $payload['message'] = 'Your chat has ended because your wallet balance is insufficient. Please recharge your wallet to continue chatting.';
+            } else {
+                $payload['type'] = 'chat_stopped';
+                $payload['message'] = 'Your chat has stopped.';
+            }
+        } else {
+
+            $payload['type'] = 'chat_active';
+            $payload['message'] = 'Your chat is active.';
+        }
+
+        return response()->json($payload);
+    }
+
+    public function startChat($sessionId, Request $request): JsonResponse
+    {
+        DB::beginTransaction();
+
+        try {
+            $user = User::where('id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $session = AiChatSession::with('astrologer')
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->findOrFail($sessionId);
+
+            if ($session->status !== 'active') {
+                DB::rollBack();
+
+                return $this->errorResponse(
+                    'This chat session is closed.',
+                    422,
+                    'session_closed'
+                );
+            }
+
+            $pricePerMinute = $this->getChatPricePerMinute($session);
+
+            if ($pricePerMinute <= 0) {
+                DB::rollBack();
+
+                return $this->errorResponse(
+                    'Chat is temporarily unavailable for this astrologer.',
+                    422,
+                    'invalid_chat_price'
+                );
+            }
+
+            $freeLimit = $this->getFreeMessageLimit();
+            $freeMessagesUsed = $this->countUserFreeMessages($user);
+
+            // Never restart an already running billing period.
+            if ($session->chat_active_since && !$session->chat_last_seen_at) {
+                $walletBalance = $this->getWalletBalance($user);
+                $availablePaidMinutes = (int) floor(
+                    $walletBalance / $pricePerMinute
+                );
+
+                DB::commit();
+
+                return response()->json([
+                    'status' => true,
+                    'message' => 'Chat is already running.',
+                    'session_id' => $session->id,
+                    'chat_active_since' => $session->chat_active_since,
+                    'free_messages' => max(0, $freeLimit - $freeMessagesUsed),
+                    'price_per_minute' => $pricePerMinute,
+                            'available_paid_minutes' => $availablePaidMinutes,
+                ]);
+            }
+
+            // Chat can start only when the user has at least ₹80.
+            // This applies even when the first question is free.
+            $minimumStartBalance = self::MINIMUM_CHAT_START_BALANCE;
+
+            $wallet = $user->wallet()
+                ->lockForUpdate()
+                ->first();
+
+            $walletBalance = $wallet
+                ? round((float) $wallet->balance, 2)
+                : 0.0;
+
+            if (!$wallet || $walletBalance < $minimumStartBalance) {
+                DB::rollBack();
+
+                return response()->json([
+                    'status' => false,
+                    'type' => 'insufficient_balance',
+                    'message' => 'Minimum ₹80 wallet balance is required to start chat. Please recharge your wallet to continue.',
+                    'required_balance' => $minimumStartBalance,
+                    'wallet_balance' => $walletBalance,
+                    'price_per_minute' => $pricePerMinute,
+                ], 422);
+            }
+
+            // First-time user can enter and consume the one free question.
+            if ($freeMessagesUsed < $freeLimit) {
+                DB::commit();
+
+                return response()->json([
+                    'status' => true,
+                    'message' => 'Chat started successfully. Your first question is free.',
+                    'session_id' => $session->id,
+                    'chat_started' => true,
+                    'chat_active' => false,
+                    'chat_stopped' => false,
+                    'session_closed' => false,
+                    'chat_active_since' => null,
+                    'chat_last_seen_at' => null,
+                    'free_messages' => $freeLimit - $freeMessagesUsed,
+                    'price_per_minute' => $pricePerMinute,
+                    'wallet_balance' => $walletBalance,
+                    'available_paid_minutes' => (int) floor($walletBalance / $pricePerMinute),
+                    'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+                    'total_amount' => (float) $session->total_amount,
+                ]);
+            }
+
+            // Paid chat also needs enough balance for its first paid minute.
+            $requiredStartBalance = max(
+                self::MINIMUM_CHAT_START_BALANCE,
+                $pricePerMinute
+            );
+
+            $availablePaidMinutes = (int) floor(
+                $walletBalance / $pricePerMinute
+            );
+
+            if (!$wallet || $walletBalance < $requiredStartBalance) {
+                DB::rollBack();
+
+                return response()->json([
+                    'status' => false,
+                    'type' => 'insufficient_balance',
+                    'message' => 'Minimum ₹80 wallet balance is required to start chat, and the wallet must also cover the first paid minute.',
+                            'required_balance' => $requiredStartBalance,
+                    'wallet_balance' => $walletBalance,
+                    'available_paid_minutes' => $availablePaidMinutes,
+                ], 422);
+            }
+
+            $now = now();
+
+            // Start a fresh billing period for this session. Historical
+            // total_amount remains cumulative, while chat_billed_minutes
+            // tracks minutes paid in the current active period.
+            $session->update([
+                'chat_billed_minutes' => 0,
+            ]);
+
+            // Prepay the first paid minute so the current minute is always
+            // fully funded and cannot be cut short.
+            $this->debitChatMinutes(
+                $user,
+                $session,
+                $wallet,
+                1,
+                'AI Astrology Chat'
+            );
+
+            $session->update([
+                'status' => 'active',
+                'closed_at' => null,
+                'chat_active_since' => $now,
+                'chat_last_seen_at' => null,
+                // chat_billed_minutes was set to 1 by the prepaid debit above.
+                // total_amount intentionally remains cumulative for this session.
+                'chat_free_used' => true,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Chat started successfully.',
+                'session_id' => $session->id,
+
+                'chat_started' => true,
+                'chat_active' => true,
+                'chat_stopped' => false,
+                'session_closed' => false,
+
+                'chat_active_since' => $now,
+                'chat_last_seen_at' => null,
+
+                'free_messages' => 0,
+                'price_per_minute' => $pricePerMinute,
+                'wallet_balance' => $this->getWalletBalance($user),
+                'available_paid_minutes' => max(0, $availablePaidMinutes - 1),
+
+                'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+                'total_amount' => (float) $session->total_amount,
+
+                'idle_timeout_seconds' => self::CHAT_IDLE_TIMEOUT_SECONDS,
+                'idle_remaining_seconds' => self::CHAT_IDLE_TIMEOUT_SECONDS,
+                'auto_close_at' => $now->copy()->addSeconds(
+                    self::CHAT_IDLE_TIMEOUT_SECONDS
+                ),
+            ]);
+        } catch (Throwable $e) {
+            DB::rollBack();
+
+            Log::error('AI_CHAT_START_ERROR', [
+                'user_id' => auth()->id(),
+                'session_id' => $sessionId,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return $this->errorResponse(
+                'Something went wrong. Please try again.',
+                500,
+                'server_error'
+            );
+        }
+    }
+
+    public function stopChat($sessionId, Request $request): JsonResponse
+    {
+        DB::beginTransaction();
+
+        try {
+            $user = User::where('id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $session = AiChatSession::with('astrologer')
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->findOrFail($sessionId);
+
+            if (!$session->chat_active_since || $session->chat_last_seen_at) {
+                DB::rollBack();
+
+                return $this->errorResponse(
+                    'This chat session is already stopped.',
+                    422,
+                    'session_closed'
+                );
+            }
+
+            $lastSeenAt = now();
+            $activeSince = Carbon::parse($session->chat_active_since);
+            $elapsedSeconds = max(0, $activeSince->diffInSeconds($lastSeenAt));
+            $requiredPaidMinutes = max(
+                1,
+                (int) ceil($elapsedSeconds / 60)
+            );
+
+            $alreadyBilledMinutes = (int) $session->chat_billed_minutes;
+            $newMinutes = max(
+                0,
+                $requiredPaidMinutes - $alreadyBilledMinutes
+            );
+
+            $pricePerMinute = $this->getChatPricePerMinute($session);
+            $unpaidMinutes = $newMinutes;
+            $wallet = $user->wallet()
+                ->lockForUpdate()
+                ->first();
+
+            if ($wallet && $newMinutes > 0 && $pricePerMinute > 0) {
+                $affordableMinutes = (int) floor(
+                    (float) $wallet->balance / $pricePerMinute
+                );
+
+                $minutesToCharge = min(
+                    $newMinutes,
+                    max(0, $affordableMinutes)
+                );
+
+                if ($minutesToCharge > 0) {
+                    $this->debitChatMinutes(
+                        $user,
+                        $session,
+                        $wallet,
+                        $minutesToCharge,
+                        'AI Astrology Chat'
+                    );
+
+                    $unpaidMinutes -= $minutesToCharge;
+                }
+            }
+
+            // Manual stop always ends the current billing period.
+            $session->update([
+                'chat_active_since' => null,
+                'chat_last_seen_at' => $lastSeenAt,
+            ]);
+
+            DB::commit();
+            $session->refresh();
+
+            if ($unpaidMinutes > 0) {
+                return response()->json([
+                    'status' => false,
+                    'type' => 'insufficient_balance',
+                    'chat_stopped' => true,
+                    'message' => "You do not have enough wallet balance to settle all chat time, that's why chat end. Please recharge your wallet to continue chatting..",
+                    'chat_active_since' => null,
+                    'chat_last_seen_at' => $session->chat_last_seen_at,
+                    'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+                    'total_amount' => (float) $session->total_amount,
+                ], 422);
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Chat stopped successfully.',
+                'chat_stopped' => true,
+                'chat_active_since' => null,
+                'chat_last_seen_at' => $session->chat_last_seen_at,
+                'chat_billed_minutes' => (int) $session->chat_billed_minutes,
+                'total_amount' => (float) $session->total_amount,
+            ]);
+        } catch (Throwable $e) {
+            DB::rollBack();
+
+            Log::error('AI_CHAT_STOP_ERROR', [
+                'user_id' => auth()->id(),
+                'session_id' => $sessionId,
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
@@ -403,29 +1438,6 @@ class AiChatApiController extends Controller
         }
 
         return [$trimmed, null, null];
-    }
-
-    private function debitWallet($wallet, User $user, AiChatSession $session, AiChatMessage $userMessage, float $chatPrice): void
-    {
-        $before = $wallet->balance;
-
-        $wallet->update([
-            'balance' => $before - $chatPrice,
-            'total_spent' => $wallet->total_spent + $chatPrice,
-        ]);
-
-        $after = $wallet->fresh()->balance;
-
-        AiChatTransaction::create([
-            'user_id' => $user->id,
-            'session_id' => $session->id,
-            'message_id' => $userMessage->id,
-            'amount' => $chatPrice,
-            'balance_before' => $before,
-            'balance_after' => $after,
-            'type' => 'debit',
-            'remark' => 'AI Astrology Question',
-        ]);
     }
 
     private function buildAiMessagePayload(
@@ -493,17 +1505,11 @@ class AiChatApiController extends Controller
 
     public function closeSession($id, Request $request): JsonResponse
     {
-        $session = AiChatSession::where('user_id', $request->user()->id)->findOrFail($id);
-
-        $session->update([
-            'status' => 'closed',
-            'closed_at' => now(),
-        ]);
-
-        return response()->json([
-            'status' => true,
-            'message' => 'Session closed successfully',
-        ]);
+        /*
+         * Backward-compatible alias: stop only the current billing period.
+         * The permanent session/history is intentionally kept active.
+         */
+        return $this->stopChat($id, $request);
     }
 
     /**
@@ -568,10 +1574,6 @@ class AiChatApiController extends Controller
             - Avoid robotic wording.
             - Avoid repetition.
             - Keep answers concise unless detailed analysis is requested.
-
-            EXPERTISE
-            Answer only within the currently selected expertise.
-            If the user asks something outside it, politely suggest starting a session with the appropriate astrologer.
 
         RULES;
     }
@@ -805,7 +1807,13 @@ class AiChatApiController extends Controller
             // birth_details (actual DOB/time) lives only inside raw_data,
             // it is never part of relevant_chart, so pull it unconditionally
             // here — otherwise the AI never sees it and keeps asking for DOB.
-            $rawData = json_decode((string) $chart->raw_data, true) ?? [];
+            $rawData = is_array($chart->raw_data)
+                ? $chart->raw_data
+                : (json_decode((string) $chart->raw_data, true) ?? []);
+
+            if (!is_array($rawData)) {
+                $rawData = [];
+            }
 
             if (isset($rawData['birth_details'])) {
                 $profile['birth_details'] = $rawData['birth_details'];
@@ -997,6 +2005,10 @@ class AiChatApiController extends Controller
             $relevantCharts = json_decode($relevantCharts, true) ?? [];
         }
 
+        if (!is_array($relevantCharts)) {
+            $relevantCharts = [];
+        }
+
         $profile = [];
 
         /*
@@ -1106,7 +2118,9 @@ class AiChatApiController extends Controller
 
         if (!empty($missingCharts) && !empty($chart->raw_data)) {
 
-            $raw = json_decode($chart->raw_data, true);
+            $raw = is_array($chart->raw_data)
+                ? $chart->raw_data
+                : (json_decode((string) $chart->raw_data, true) ?? []);
 
             if (is_array($raw)) {
 
