@@ -288,13 +288,11 @@ class AiChatApiController extends Controller
                 }
 
                 if ($lastUserActivityAt->copy()->addSeconds(180)->lte(now())) {
-                    $closedAt = now();
+                    $stoppedAt = now();
 
                     $session->update([
-                        'status' => 'closed',
-                        'closed_at' => $closedAt,
                         'chat_active_since' => null,
-                        'chat_last_seen_at' => $closedAt,
+                        'chat_last_seen_at' => $stoppedAt,
                     ]);
 
                     DB::commit();
@@ -304,13 +302,13 @@ class AiChatApiController extends Controller
                         'chat_started' => true,
                         'chat_active' => false,
                         'chat_stopped' => true,
-                        'session_closed' => true,
+                        'session_closed' => false,
                         'session_id' => $session->id,
                         'type' => 'session_closed',
                         'message' => 'Your chat session was automatically closed because there was no message from you for 3 minutes.',
                         'chat_active_since' => null,
-                        'chat_last_seen_at' => $closedAt,
-                        'session_closed_at' => $closedAt,
+                        'chat_last_seen_at' => $stoppedAt,
+                        'session_closed_at' => null,
                     ], 422);
                 }
             }
@@ -799,8 +797,6 @@ class AiChatApiController extends Controller
 
                             if (!$user) {
                                 $session->update([
-                                    'status' => 'closed',
-                                    'closed_at' => $now,
                                     'chat_active_since' => null,
                                     'chat_last_seen_at' => $now,
                                 ]);
@@ -818,8 +814,6 @@ class AiChatApiController extends Controller
 
                             if ($price <= 0) {
                                 $session->update([
-                                    'status' => 'closed',
-                                    'closed_at' => $now,
                                     'chat_active_since' => null,
                                     'chat_last_seen_at' => $now,
                                 ]);
@@ -842,8 +836,6 @@ class AiChatApiController extends Controller
 
                             if (!$wallet) {
                                 $session->update([
-                                    'status' => 'closed',
-                                    'closed_at' => $now,
                                     'chat_active_since' => null,
                                     'chat_last_seen_at' => $now,
                                 ]);
@@ -975,18 +967,16 @@ class AiChatApiController extends Controller
 
                             /*
                              * Three minutes without a USER message:
-                             * permanently close this chat session.
-                             *
+                             * stop only the current chat/billing period.
+                             * The permanent session remains active and reusable.
                              * The next status API call will return
                              * "Your chat session is closed." instead of an
                              * insufficient-balance message.
                              */
                             if ($autoCloseDue) {
                                 $session->update([
-                                    'status' => 'closed',
-                                    'closed_at' => $now,
                                     'chat_active_since' => null,
-                                    'chat_last_seen_at' => $now,
+                                    'chat_last_seen_at' => $idleDeadline,
                                 ]);
 
                                 Log::info('AI_CHAT_AUTO_CLOSED_INACTIVE', [
