@@ -8,6 +8,7 @@ use App\Models\WalletRecharge;
 use App\Models\AiChatSession;
 use App\Models\AiChatMessage;
 use App\Models\AiChatTransaction;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -47,93 +48,168 @@ class WalletApiController extends Controller
 
     public function chatStatistics(Request $request)
     {
-        $user = auth()->user();
+        $user = $request->user();
 
+        /*
+        * Get ALL chat sessions of the logged-in user.
+        *
+        * Do NOT paginate here because the requirement is complete
+        * chat history + lifetime statistics.
+        */
         $sessions = AiChatSession::with([
                 'astrologer:id,name,slug',
                 'expertise:id,ai_astrologer_id,name,slug',
-                'messages:id,session_id,sender',
-                'transactions:id,session_id,amount,type'
             ])
+            ->withCount([
+                // All messages in the session
+                'messages as total_messages',
+
+                // User messages only
+                'messages as questions_asked' => function ($query) {
+                    $query->where('sender', 'user');
+                },
+
+                // Assistant replies only
+                'messages as assistant_replies' => function ($query) {
+                    $query->where('sender', 'assistant');
+                },
+
+                // Free user messages
+                'messages as free_messages' => function ($query) {
+                    $query->where('sender', 'user')
+                        ->where('is_free', true);
+                },
+
+                // Paid user messages
+                'messages as paid_messages_count' => function ($query) {
+                    $query->where('sender', 'user')
+                        ->where('is_free', false);
+                },
+            ])
+            ->withSum([
+                'transactions as total_deducted' => function ($query) {
+                    $query->where('type', 'debit');
+                }
+            ], 'amount')
             ->where('user_id', $user->id)
-            ->latest('last_message_at')
-            ->paginate(10);
+            ->orderByDesc('started_at')
+            ->get();
 
-        $totalPaidChats = $sessions->getCollection()->sum('paid_messages');
+        /*
+        * Lifetime summary
+        *
+        * IMPORTANT:
+        * Do not calculate summary from the current page/session collection.
+        * These queries cover the user's COMPLETE chat history.
+        */
 
-        $totalFreeChats = $sessions->getCollection()->sum('free_messages_used');
+        $totalChats = $sessions->count();
 
-        $totalSpent = $sessions->getCollection()->sum(function ($session) {
-            return $session->transactions
-                ->where('type', 'debit')
-                ->sum('amount');
-        });
+        $totalFreeMessages = AiChatMessage::whereHas('session', function ($query) use ($user) {
+                $query->where('user_id', $user->id);
+            })
+            ->where('sender', 'user')
+            ->where('is_free', true)
+            ->count();
 
-        $history = $sessions->getCollection()->map(function ($session) {
+        $totalPaidMessages = AiChatMessage::whereHas('session', function ($query) use ($user) {
+                $query->where('user_id', $user->id);
+            })
+            ->where('sender', 'user')
+            ->where('is_free', false)
+            ->count();
 
-            $questionCount = $session->messages
-                ->where('sender', 'user')
-                ->count();
+        /*
+        * Total paid minutes are stored on every permanent session.
+        */
+        $totalPaidMinutes = (int) AiChatSession::where('user_id', $user->id)
+            ->sum('chat_billed_minutes');
 
-            $replyCount = $session->messages
-                ->where('sender', 'assistant')
-                ->count();
+        /*
+        * Total money spent is calculated from actual debit transactions.
+        * This is more reliable than summing session total_amount.
+        */
+        $totalSpent = (float) AiChatTransaction::where('user_id', $user->id)
+            ->where('type', 'debit')
+            ->sum('amount');
 
-            $deducted = $session->transactions
-                ->where('type', 'debit')
-                ->sum('amount');
+        /*
+        * Build complete history.
+        */
+        $history = $sessions->map(function ($session) {
+
+            $startedAt = $session->started_at
+                ? Carbon::parse($session->started_at)
+                : null;
+
+            $lastMessageAt = $session->last_message_at
+                ? Carbon::parse($session->last_message_at)
+                : null;
+
+            /*
+            * Duration here means the span between the first session
+            * creation and the latest conversation activity.
+            *
+            * Billing duration is separately available through
+            * chat_billed_minutes.
+            */
+            $duration = ($startedAt && $lastMessageAt)
+                ? $startedAt->diffForHumans($lastMessageAt, true)
+                : null;
 
             return [
 
                 'session_id' => $session->id,
 
                 'astrologer' => [
-
                     'id' => $session->astrologer?->id,
-
                     'name' => $session->astrologer?->name,
-
                     'slug' => $session->astrologer?->slug,
-
                 ],
 
                 'expertise' => [
-
                     'id' => $session->expertise?->id,
-
                     'name' => $session->expertise?->name,
-
                     'slug' => $session->expertise?->slug,
-
                 ],
 
-                'questions_asked' => $questionCount,
-
-                'assistant_replies' => $replyCount,
-
-                'free_messages' => $session->free_messages_used,
-
-                'paid_messages' => $session->paid_messages,
-
-                'total_messages' => $questionCount + $replyCount,
-
-                'total_deducted' => (float)$deducted,
-
-                'session_amount' => (float)$session->total_amount,
-
-                'started_at' => optional($session->started_at)
-                    ->format('d M Y h:i A'),
-
-                'last_message_at' => optional($session->last_message_at)
-                    ->format('d M Y h:i A'),
-
-                'duration' => $session->started_at && $session->last_message_at
-                    ? $session->started_at->diffForHumans($session->last_message_at, true)
+                /*
+                * Complete conversation period
+                */
+                'started_at' => $startedAt
+                    ? $startedAt->format('d M Y h:i A')
                     : null,
 
-            ];
+                'last_message_at' => $lastMessageAt
+                    ? $lastMessageAt->format('d M Y h:i A')
+                    : null,
 
-        });
+                'duration' => $duration,
+
+                /*
+                * Message statistics
+                */
+                'questions_asked' => (int) $session->questions_asked,
+
+                'assistant_replies' => (int) $session->assistant_replies,
+
+                'free_messages' => (int) $session->free_messages,
+
+                'paid_messages' => (int) $session->paid_messages_count,
+
+                'total_messages' => (int) $session->total_messages,
+
+                /*
+                * Billing statistics
+                */
+                // 'paid_minutes' => (int) $session->chat_billed_minutes,
+
+                'total_deducted' => (float) ($session->total_deducted ?? 0),
+
+                'session_amount' => (float) $session->total_amount,
+
+            ];
+        })->values();
 
         return response()->json([
 
@@ -141,32 +217,29 @@ class WalletApiController extends Controller
 
             'message' => 'Chat statistics fetched successfully',
 
+            /*
+            * LIFETIME TOTALS
+            */
             'summary' => [
 
-                'total_paid_chats' => (int) $totalPaidChats,
+                'total_chats' => (int) $totalChats,
 
-                'total_free_chats' => (int) $totalFreeChats,
+                'total_free_messages' => (int) $totalFreeMessages,
 
-                'total_spent' => (float) $totalSpent,
+                'total_paid_messages' => (int) $totalPaidMessages,
+
+                // 'total_paid_minutes' => (int) $totalPaidMinutes,
+
+                'total_spent' => round($totalSpent, 2),
 
             ],
 
+            /*
+            * COMPLETE CHAT HISTORY
+            */
             'history' => $history,
 
-            'pagination' => [
-
-                'current_page' => $sessions->currentPage(),
-
-                'last_page' => $sessions->lastPage(),
-
-                'per_page' => $sessions->perPage(),
-
-                'total' => $sessions->total(),
-
-            ]
-
         ]);
-
     }
 
     public function recharge(Request $request)
