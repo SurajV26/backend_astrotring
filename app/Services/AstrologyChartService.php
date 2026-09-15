@@ -376,13 +376,14 @@ class AstrologyChartService
             ]);
 
         } catch (\Throwable $e) {
-
             Log::error('Horoscope Generation Failed', [
                 'user_id' => $user->id,
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),
                 'file' => $e->getFile(),
             ]);
+
+            throw $e;
         }
     }
 }
