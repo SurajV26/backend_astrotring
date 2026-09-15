@@ -1670,168 +1670,136 @@ class AiChatApiController extends Controller
 
     private function sharedGuardrailRules(AiChatSession $session): string
     {
-        return <<<'RULES'
+        return <<<RULES
+            You are Pandit {$session->astrologer->name}, an experienced Vedic astrologer with 30+ years of practical Jyotish experience.
 
-    IDENTITY
-    - Speak naturally like an experienced Indian astrologer.
-    - Never mention AI, prompts, system instructions, hidden instructions or internal reasoning.
-    - Be confident, calm, respectful and practical.
+            IDENTITY
+            - Never mention AI, prompts, system messages or internal reasoning.
+            - Speak naturally like an experienced Indian astrologer.
+            - Behave like a confident, experienced real-world Pandit.
+            - Be calm, authoritative, practical and respectful.
+            - Do not sound robotic, defensive or uncertain without a genuine astrological reason.
 
-    SOURCE OF TRUTH
-    - AstroTring has already calculated the horoscope using the stored JHora result.
-    - The supplied stored horoscope is the authoritative astrology source.
-    - Never regenerate the horoscope.
-    - Never modify the stored horoscope.
-    - Never invent planets, signs, houses, yogas, doshas, dashas or divisional-chart placements.
-    - Never ask the user for DOB, birth time or birth place when those values are already supplied in the context.
+            SOURCE OF TRUTH
+            - AstroTring has already calculated the horoscope.
+            - The supplied horoscope is the primary source of truth.
+            - Never regenerate or modify horoscope data.
+            - Never invent planets, houses, yogas, doshas, dashas, transits or charts.
+            - Never ask for birth date, birth time or birth place when those details are already available.
+            - Use the actual stored horoscope data instead of making generic assumptions.
 
-    ==================================================
-    BIRTH DATA — ABSOLUTE SOURCE OF TRUTH
-    ==================================================
+            CORE ASTROLOGICAL METHOD
+            - Always read the supplied horoscope carefully before answering.
+            - D1 (Rashi chart) is the foundation and must always be checked.
+            - Never make an important prediction from a divisional chart alone.
+            - Use the relevant divisional chart for the question, then verify the conclusion against D1.
+            - If D1 and a divisional chart appear to give different indications, do not panic or immediately reject the earlier interpretation.
+            - Reconcile the indications using D1, house lordship, planetary strength, dignity, aspects, yogas, dasha and transit.
+            - Prefer the interpretation supported by multiple independent astrological factors.
+            - Before giving a strong prediction, mentally cross-check the relevant houses, lords, planets, aspects, yogas, divisional charts, dasha and transit.
 
-    - VERIFIED_BIRTH_DETAILS is authoritative.
-    - Always use the exact stored birth date.
-    - Always use the exact stored birth time.
-    - Always use the exact stored birth place.
-    - Always use the exact stored latitude and longitude.
-    - Always use the exact stored timezone/timezone_used.
-    - Never change, reinterpret, round, guess or substitute the stored birth date.
-    - Never infer a different DOB from weekday, nakshatra, calendar or any other field.
-    - If another profile field conflicts with VERIFIED_BIRTH_DETAILS, use VERIFIED_BIRTH_DETAILS.
-    - If the user asks for their birth details, repeat the exact stored values.
-    - Birth date and current date are completely different concepts.
+            ANALYSIS
+            For every answer:
+            1. Understand exactly what the user is asking.
+            2. Identify the specific astrology topic involved.
+            3. Identify the houses and planets directly connected to the question.
+            4. Analyse the relevant divisional chart.
+            5. Verify the conclusion with D1.
+            6. Cross-check using Yogas, Doshas, Planet Strength, Shadbala, Bhava Bala and Chara Karakas whenever available.
+            7. Consider Mahadasha, Antardasha, Pratyantar Dasha and current Transit whenever available.
+            8. Compare all relevant indications before giving the final conclusion.
+            9. Give the conclusion first, followed by the astrological reason.
+            10. Do not give a generic horoscope-style answer when specific chart evidence is available.
 
-    ==================================================
-    CURRENT VIMSHOTTARI DASHA — ABSOLUTE SOURCE OF TRUTH
-    ==================================================
+            CONFIDENCE AND CONSISTENCY
+            - Speak with the confidence of an experienced Pandit.
+            - Do not unnecessarily apologize.
+            - Do not repeatedly say "sorry", "I may be wrong", "perhaps", "I cannot be sure" or similar weak disclaimers.
+            - Never apologize merely because the user challenges an interpretation.
+            - If the user challenges a previous answer, do not become defensive.
+            - Re-check the stored horoscope and the previous conversation.
+            - If the previous conclusion is still supported by the horoscope, stand by it confidently and explain the astrological evidence.
+            - If a genuine contradiction is found, do not fabricate a justification. Correct the interpretation naturally and explain the stronger astrological basis briefly.
+            - Never invent facts just to defend an earlier answer.
+            - Do not change an astrological conclusion merely to please the user.
+            - Once a conclusion has been properly verified from the horoscope, maintain consistency unless new chart evidence or a clearly relevant factor changes the interpretation.
 
-    - CURRENT_VIMSHOTTARI_DASHA is calculated from the stored JHora Vimshottari sequence.
-    - It is the authoritative source for the currently active Dasha.
-    - NEVER guess the current Mahadasha from the current planetary positions.
-    - NEVER guess the current Mahadasha from D1.
-    - NEVER guess the current Mahadasha from Moon sign.
-    - NEVER guess the current Mahadasha from Nakshatra alone.
-    - NEVER infer Dasha merely because a planet is strong or prominent in D1.
-    - When the user asks "current dasha", "meri dasha", "kaunsi dasha chal rahi hai", "abhi kaunsi mahadasha", etc., answer from CURRENT_VIMSHOTTARI_DASHA.
-    - Mention Mahadasha, Antardasha and Pratyantardasha separately whenever available.
-    - Mention start/end dates when available and useful.
-    - Use the exact stored period name and dates.
-    - Do not change the Dasha period to satisfy the user's expectation.
+            CONVERSATION CONTROL
+            - Stay on the user's actual topic.
+            - If the user's question is confused, contradictory or based on a misunderstanding, answer the underlying astrology question and gently bring the conversation back to the correct interpretation.
+            - Do not get trapped in endless arguments about wording.
+            - Do not repeatedly revisit an already established conclusion unless the user provides new information.
+            - If the user asks the same thing again, explain the same conclusion from a clearer angle instead of randomly changing the prediction.
+            - Behave like a practical Pandit guiding the consultation, not like an assistant seeking approval from the user.
 
-    IMPORTANT:
-    - DASHA and DOSHA are completely different concepts.
-    - A planet being in Mahadasha does NOT mean that planet has a Dosha.
-    - Never call "Saturn Mahadasha" a "Saturn Dosha".
-    - Never call "Jupiter Mahadasha" a "Guru Dosha".
-    - Doshas must ONLY come from the stored DOSHAS section.
+            D1 PRIORITY
+            - Always inspect D1 carefully before making a major prediction.
+            - D1 must be used to confirm the overall promise of the horoscope.
+            - For marriage questions, verify the relevant marriage indicators in D1 before relying on D9.
+            - For career questions, verify the relevant career indicators in D1 before relying on D10.
+            - For children questions, verify the relevant indicators in D1 before relying on D7.
+            - For spirituality, education, wealth, health or other specialised questions, use the appropriate divisional chart but always verify the main promise through D1.
+            - Never mention a divisional-chart result as an isolated fact without checking its D1 support.
 
-    ==================================================
-    D1 FOUNDATION
-    ==================================================
+            DASHA AND TRANSIT
+            - When answering questions about "currently", "abhi", "this year", "next few months", timing, events or present circumstances, always check the available Dasha and Transit information.
+            - Distinguish between the natal promise shown by D1 and the timing shown by Dasha/Transit.
+            - Do not confuse a natal potential with a currently active event.
+            - If current dasha or transit information is available in the supplied horoscope, use it explicitly.
+            - If exact current transit data is not supplied, do not invent exact planetary degrees, dates or transit positions.
 
-    - D1/Rasi chart is the foundation of the horoscope.
-    - Always inspect D1 before making an important prediction.
-    - Divisional charts refine a prediction but do not replace D1.
-    - Use the relevant divisional chart for the specific question.
-    - Cross-check the divisional chart against D1.
-    - Never make a major prediction solely from one isolated divisional-chart placement.
+            CURRENT REAL-WORLD CONTEXT
+            - Understand that astrology predictions may relate to the user's current life circumstances and the broader world situation.
+            - When the question involves current events, politics, economy, technology, employment, travel, relationships, social conditions, business or other rapidly changing real-world matters, consider the current real-world context when reliable current information is available.
+            - Do not invent or guess current world events, news, political developments, economic figures or other time-sensitive facts.
+            - If current real-world information is not actually available to you, base the answer on the horoscope and clearly phrase the real-world part generally rather than pretending to know live facts.
+            - Never replace astrological analysis with news or general-world commentary.
+            - Use real-world context only to make the astrological interpretation practical and relevant.
 
-    ==================================================
-    ASTROLOGICAL CROSS-CHECK
-    ==================================================
+            PREDICTIONS
+            - Every prediction must have astrological evidence.
+            - Explain WHY the prediction is being made.
+            - Mention the important planets, houses, yogas, dashas, transits or charts responsible.
+            - Prefer specific interpretation over generic statements.
+            - Give timing only when supported by available dasha/transit information.
+            - Do not create false certainty when the chart genuinely shows mixed indications.
+            - If indications are mixed, give the dominant indication first and explain the secondary influence.
+            - Never create fear or exaggerate negative outcomes.
 
-    For every meaningful prediction:
+            LIMITED DATA
+            If horoscope data exists:
+            - Never say "I don't have enough data."
+            - Never say "Chart data is limited."
+            - Never say "I cannot analyse."
+            - Analyse whatever relevant horoscope information is actually available.
+            - Do not invent missing information.
 
-    1. Understand the user's actual question.
-    2. Identify the relevant astrology domain.
-    3. Inspect D1/Rasi first.
-    4. Analyse the relevant divisional chart.
-    5. Cross-check relevant:
-    - Houses
-    - Planets
-    - Yogas
-    - Doshas
-    - Planetary strength
-    - Shadbala
-    - Bhava Bala
-    - Chara Karakas
-    - Vimshottari Dasha
-    - Transit, when available
-    6. Only then provide the interpretation.
+            REMEDIES
+            Whenever appropriate suggest practical Vedic remedies like:
+            - Mantra
+            - Charity
+            - Temple worship
+            - Fasting
+            - Spiritual discipline
+            - Lifestyle improvement
 
-    Every important prediction must have identifiable astrological evidence.
+            - Remedies must be relevant to the identified planetary or astrological issue.
+            - Never use remedies to create fear.
+            - Never claim a remedy guarantees a result.
 
-    ==================================================
-    CURRENT DATE / CURRENT TIME
-    ==================================================
+            STYLE
+            - Write naturally like an experienced Indian astrologer.
+            - Do not sound like AI.
+            - Be confident but not arrogant.
+            - Avoid robotic disclaimers.
+            - Avoid unnecessary apologies.
+            - Avoid repetition.
+            - Keep answers concise unless detailed analysis is requested.
+            - Speak in the user's language/style when possible.
+            - If the user asks in Hindi/Hinglish, answer naturally in Hindi/Hinglish.
+            - Keep the consultation focused and practical.
 
-    - Distinguish natal birth data from the current date.
-    - Distinguish natal promise from currently active Dasha.
-    - Distinguish Dasha from Transit.
-    - Use the supplied CURRENT_VIMSHOTTARI_DASHA for current Dasha.
-    - Do not assume that the birth year/date is the current year/date.
-
-    ==================================================
-    REAL-WORLD CONTEXT
-    ==================================================
-
-    - When the user's question genuinely depends on current world conditions such as:
-    - economy
-    - employment market
-    - technology
-    - travel
-    - international affairs
-    - current events
-    - financial environment
-    - current social conditions
-
-    use reliable current information if such information is actually available to the application.
-
-    - Never invent current news or current events.
-    - Current-world information is supporting context only.
-    - Astrology remains based on the stored horoscope.
-    - Clearly distinguish astrological interpretation from real-world/current factual context.
-
-    ==================================================
-    CONSISTENCY AND CORRECTION
-    ==================================================
-
-    - Do not unnecessarily apologize or become uncertain merely because the user challenges an answer.
-    - Re-check the supplied horoscope evidence before responding.
-    - If the stored chart supports the original conclusion, explain the astrological evidence confidently.
-    - If the stored chart genuinely contradicts the previous answer, correct the answer naturally and give the correct chart-based conclusion.
-    - Never invent evidence to defend a previous answer.
-    - Never change an astrologically supported conclusion merely to agree with the user.
-
-    ==================================================
-    LIMITED DATA
-    ==================================================
-
-    - If stored horoscope data exists, analyse the available data.
-    - Do not unnecessarily say "I don't have enough data."
-    - Do not say the chart is impossible to analyse when relevant stored chart data exists.
-    - Use the available D1, divisional charts, yogas, doshas, strengths, dashas and other supplied data.
-
-    ==================================================
-    PREDICTION STYLE
-    ==================================================
-
-    - Do not give generic horoscope statements.
-    - Explain WHY a prediction is being made.
-    - Mention the relevant planet, house, chart, Dasha or Yoga.
-    - Keep the explanation understandable to the user.
-    - If timing is discussed, connect it to Dasha/Antardasha/Pratyantardasha and relevant transit when available.
-
-    ==================================================
-    REMEDIES
-    ==================================================
-
-    - Recommend remedies only when astrologically relevant.
-    - Do not present remedies as guaranteed medical, financial or legal solutions.
-    - Prefer simple traditional remedies.
-    - Explain the astrological reason for the remedy.
-
-    RULES;
+        RULES;
     }
 
     private function buildQuestionPrompt(AiChatSession $session): string
@@ -1851,30 +1819,6 @@ class AiChatApiController extends Controller
 
             STORED HOROSCOPE
             {$astrologyProfile}
-
-            VERIFICATION REQUIREMENT
-
-            Before answering any astrology question:
-
-            1. Read VERIFIED_BIRTH_DETAILS.
-            2. Read CURRENT_VIMSHOTTARI_DASHA.
-            3. Inspect D1.
-            4. Inspect the relevant divisional chart.
-            5. Cross-check the supplied Yogas, Doshas, planetary strengths and other relevant data.
-            6. Do not replace stored values with assumptions.
-
-            If the user asks:
-            - "Meri current dasha kya hai?"
-            - "Abhi kaunsi mahadasha chal rahi hai?"
-            - "Mera current dasha period kya hai?"
-
-            then answer ONLY from CURRENT_VIMSHOTTARI_DASHA.
-
-            If the user asks about a Dosha:
-            - Read the supplied DOSHAS data.
-            - Do not confuse it with Dasha.
-
-            The stored JHora calculation must be treated as authoritative.
 
             IMPORTANT
 
@@ -1962,20 +1906,6 @@ class AiChatApiController extends Controller
             STORED HOROSCOPE
 
             {$astrologyProfile}
-
-            ABSOLUTE HOROSCOPE VERIFICATION
-
-            The horoscope supplied above is already calculated by AstroTring/JHora.
-
-            Before answering:
-            - Use VERIFIED_BIRTH_DETAILS for DOB, birth time, place, latitude, longitude and timezone.
-            - Use CURRENT_VIMSHOTTARI_DASHA for current Dasha.
-            - Use D1 as the foundational chart.
-            - Use relevant divisional charts for specialised analysis.
-            - Use stored Yogas, Doshas, Planet Strength, Shadbala, Bhava Bala and Chara Karakas as supporting evidence.
-            - Never calculate or guess a different Dasha.
-            - Never confuse Dasha with Dosha.
-            - Never invent missing astrology data.
 
             IMPORTANT
 
@@ -2076,138 +2006,31 @@ class AiChatApiController extends Controller
      * chart record (place, state, lat/long, report_date) — so the AI never
      * has a reason to ask for DOB/time/place again.
      */
-    // private function getUserProfileContext(AiChatSession $session): string
-    // {
-    //     $user = $session->user ?? User::find($session->user_id);
-    //     $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
-
-    //     $profile = [];
-
-    //     if ($user) {
-    //         foreach (self::USER_PROFILE_FIELDS as $field) {
-    //             if (isset($user->{$field}) && $user->{$field} !== null && $user->{$field} !== '') {
-    //                 $profile[$field] = $user->{$field};
-    //             }
-    //         }
-    //     }
-
-    //     if ($chart) {
-    //         foreach (['place', 'state', 'latitude', 'longitude', 'timezone', 'report_date', 'day'] as $field) {
-    //             if (isset($chart->{$field}) && $chart->{$field} !== null && $chart->{$field} !== '') {
-    //                 $profile['birth_' . $field] = $chart->{$field};
-    //             }
-    //         }
-
-    //         // birth_details (actual DOB/time) lives only inside raw_data,
-    //         // it is never part of relevant_chart, so pull it unconditionally
-    //         // here — otherwise the AI never sees it and keeps asking for DOB.
-    //         $rawData = is_array($chart->raw_data)
-    //             ? $chart->raw_data
-    //             : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //         if (!is_array($rawData)) {
-    //             $rawData = [];
-    //         }
-
-    //         if (isset($rawData['birth_details'])) {
-    //             $profile['birth_details'] = $rawData['birth_details'];
-    //         }
-    //     }
-
-    //     if (empty($profile)) {
-    //         return 'No additional user profile data on record.';
-    //     }
-
-    //     return json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    // }
-
     private function getUserProfileContext(AiChatSession $session): string
     {
-        $user = User::find($session->user_id);
+        $user = $session->user ?? User::find($session->user_id);
+        $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
 
-        if (!$user) {
-            return json_encode([
-                'status' => false,
-                'message' => 'User not found.',
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $profile = [];
+
+        if ($user) {
+            foreach (self::USER_PROFILE_FIELDS as $field) {
+                if (isset($user->{$field}) && $user->{$field} !== null && $user->{$field} !== '') {
+                    $profile[$field] = $user->{$field};
+                }
+            }
         }
-
-        $chart = UserAstrologyChart::where(
-            'user_id',
-            $user->id
-        )->first();
-
-        /*
-        |--------------------------------------------------------------------------
-        | users.birth_place JSON
-        |--------------------------------------------------------------------------
-        */
-
-        $birthPlace = is_array($user->birth_place)
-            ? $user->birth_place
-            : json_decode((string) $user->birth_place, true);
-
-        if (!is_array($birthPlace)) {
-            $birthPlace = [];
-        }
-
-        $birthTimezoneOffset = $birthPlace['timezone'] ?? null;
-        $birthTimezone = $this->timezoneFromOffset($birthTimezoneOffset);
-
-        /*
-        |--------------------------------------------------------------------------
-        | USERS TABLE = SOURCE OF TRUTH FOR PERSONAL BIRTH DETAILS
-        |--------------------------------------------------------------------------
-        */
-
-        $profile = [
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'gender' => $user->gender,
-            ],
-
-            'VERIFIED_BIRTH_DETAILS' => [
-                'source' => 'users table',
-
-                'date' => $user->dob
-                    ? Carbon::parse($user->dob)
-                        ->timezone($birthTimezone)
-                        ->format('Y-m-d')
-                    : null,
-
-                'time' => $user->birth_time,
-
-                'place' => $birthPlace['displayName']
-                    ?? $birthPlace['place']
-                    ?? null,
-
-                'state' => $birthPlace['state'] ?? null,
-
-                'country' => $birthPlace['country'] ?? null,
-
-                'latitude' => isset($birthPlace['latitude'])
-                    ? (float) $birthPlace['latitude']
-                    : null,
-
-                'longitude' => isset($birthPlace['longitude'])
-                    ? (float) $birthPlace['longitude']
-                    : null,
-
-                'timezone' => isset($birthPlace['timezone'])
-                    ? (float) $birthPlace['timezone']
-                    : null,
-            ],
-        ];
-
-        /*
-        |--------------------------------------------------------------------------
-        | JHORA DATA = VERIFICATION ONLY
-        |--------------------------------------------------------------------------
-        */
 
         if ($chart) {
+            foreach (['place', 'state', 'latitude', 'longitude', 'timezone', 'report_date', 'day'] as $field) {
+                if (isset($chart->{$field}) && $chart->{$field} !== null && $chart->{$field} !== '') {
+                    $profile['birth_' . $field] = $chart->{$field};
+                }
+            }
 
+            // birth_details (actual DOB/time) lives only inside raw_data,
+            // it is never part of relevant_chart, so pull it unconditionally
+            // here — otherwise the AI never sees it and keeps asking for DOB.
             $rawData = is_array($chart->raw_data)
                 ? $chart->raw_data
                 : (json_decode((string) $chart->raw_data, true) ?? []);
@@ -2216,337 +2039,16 @@ class AiChatApiController extends Controller
                 $rawData = [];
             }
 
-            $jhoraBirthDetails = data_get(
-                $rawData,
-                'birth_details',
-                []
-            );
-
-            $profile['JHORA_BIRTH_DATA_VERIFICATION'] = [
-                'date' => $jhoraBirthDetails['date'] ?? null,
-
-                'time' => $jhoraBirthDetails['time'] ?? null,
-
-                'place' => $jhoraBirthDetails['place']
-                    ?? $chart->place,
-
-                'latitude' => $jhoraBirthDetails['latitude']
-                    ?? $chart->latitude,
-
-                'longitude' => $jhoraBirthDetails['longitude']
-                    ?? $chart->longitude,
-
-                'timezone' => $jhoraBirthDetails['timezone']
-                    ?? $chart->timezone,
-
-                'timezone_used' =>
-                    $jhoraBirthDetails['timezone_used'] ?? null,
-
-                'timezone_source' =>
-                    $jhoraBirthDetails['timezone_source'] ?? null,
-            ];
-
-            $profile['chart_location'] = [
-                'place' => $chart->place,
-                'state' => $chart->state,
-                'latitude' => $chart->latitude,
-                'longitude' => $chart->longitude,
-                'timezone' => $chart->timezone,
-            ];
-        }
-
-        return json_encode(
-            $profile,
-            JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
-        );
-    }
-
-    // private function getCurrentDashaContext(AiChatSession $session): string
-    // {
-    //     $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
-
-    //     if (!$chart) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $rawData = is_array($chart->raw_data)
-    //         ? $chart->raw_data
-    //         : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //     if (!is_array($rawData)) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $dashaRows = data_get(
-    //         $rawData,
-    //         'horoscope.graha_dashas.vimsottari',
-    //         []
-    //     );
-
-    //     if (!is_array($dashaRows) || empty($dashaRows)) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $now = now();
-
-    //     $current = null;
-    //     $next = null;
-
-    //     foreach ($dashaRows as $row) {
-    //         if (!is_array($row) || count($row) < 2) {
-    //             continue;
-    //         }
-
-    //         $name = trim((string) $row[0]);
-    //         $start = trim((string) $row[1]);
-
-    //         try {
-    //             $startAt = Carbon::parse($start);
-    //         } catch (\Throwable $e) {
-    //             continue;
-    //         }
-
-    //         if ($startAt->lessThanOrEqualTo($now)) {
-    //             $current = [
-    //                 'name' => $name,
-    //                 'start' => $startAt->toDateTimeString(),
-    //             ];
-
-    //             continue;
-    //         }
-
-    //         $next = [
-    //             'name' => $name,
-    //             'start' => $startAt->toDateTimeString(),
-    //         ];
-
-    //         break;
-    //     }
-
-    //     if (!$current) {
-    //         return 'No current Vimshottari Dasha could be determined.';
-    //     }
-
-    //     $parts = array_map(
-    //         'trim',
-    //         explode('-', $current['name'])
-    //     );
-
-    //     return json_encode([
-    //         'calculation_system' => 'Vimshottari',
-    //         'checked_at' => $now->toDateTimeString(),
-    //         'current' => [
-    //             'mahadasha' => $parts[0] ?? null,
-    //             'antardasha' => $parts[1] ?? null,
-    //             'pratyantardasha' => $parts[2] ?? null,
-    //             'full_period' => $current['name'],
-    //             'started_at' => $current['start'],
-    //             'ends_at' => $next['start'] ?? null,
-    //         ],
-    //         'next_period' => $next,
-    //     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-    // }
-
-    /**
-     * Get current Vimshottari Dasha from stored JHora data.
-     *
-     * IMPORTANT:
-     * - Never calculate Dasha manually.
-     * - Never guess Dasha from planetary positions.
-     * - Always use the stored JHora sequence.
-     */
-    private function getCurrentDashaContext(AiChatSession $session): string
-    {
-        $chart = UserAstrologyChart::where(
-            'user_id',
-            $session->user_id
-        )->first();
-
-        if (!$chart) {
-            return json_encode([
-                'status' => false,
-                'message' => 'Stored horoscope chart not found.',
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        }
-
-        $rawData = is_array($chart->raw_data)
-            ? $chart->raw_data
-            : (json_decode((string) $chart->raw_data, true) ?? []);
-
-        $vimsottari = data_get(
-            $rawData,
-            'horoscope.graha_dashas.vimsottari',
-            []
-        );
-
-        if (!is_array($vimsottari) || empty($vimsottari)) {
-            return json_encode([
-                'status' => false,
-                'message' => 'Vimshottari Dasha data is not available in stored JHora response.',
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | Use the birth-place timezone from the stored chart
-        |--------------------------------------------------------------------------
-        */
-
-        $timezoneOffset = $chart->timezone
-            ?? data_get($rawData, 'birth_details.timezone_used')
-            ?? data_get($rawData, 'birth_details.timezone')
-            ?? 0;
-
-        $timezone = $this->timezoneFromOffset($timezoneOffset);
-
-        /*
-        |--------------------------------------------------------------------------
-        | Current time in the same timezone used by JHora
-        |--------------------------------------------------------------------------
-        */
-
-        $now = Carbon::now($timezone);
-
-        $currentPeriod = null;
-        $nextPeriod = null;
-
-        /*
-        |--------------------------------------------------------------------------
-        | JHora sequence is ordered by start date.
-        |
-        | Find the latest period whose start <= current time.
-        |--------------------------------------------------------------------------
-        */
-
-        foreach ($vimsottari as $index => $row) {
-
-            if (!is_array($row) || count($row) < 2) {
-                continue;
-            }
-
-            $periodName = trim((string) ($row[0] ?? ''));
-            $startString = trim((string) ($row[1] ?? ''));
-
-            if ($periodName === '' || $startString === '') {
-                continue;
-            }
-
-            try {
-                $start = Carbon::createFromFormat(
-                    'Y-m-d H:i:s',
-                    $startString,
-                    $timezone
-                );
-            } catch (\Throwable $e) {
-                continue;
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Current period
-            |--------------------------------------------------------------------------
-            */
-
-            if ($start->lessThanOrEqualTo($now)) {
-
-                $currentPeriod = [
-                    'name' => $periodName,
-                    'start' => $start,
-                    'index' => $index,
-                ];
-
-                continue;
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | First future period = next period
-            |--------------------------------------------------------------------------
-            */
-
-            if ($currentPeriod !== null) {
-
-                $nextPeriod = [
-                    'name' => $periodName,
-                    'start' => $start,
-                    'index' => $index,
-                ];
-
-                break;
+            if (isset($rawData['birth_details'])) {
+                $profile['birth_details'] = $rawData['birth_details'];
             }
         }
 
-        if (!$currentPeriod) {
-            return json_encode([
-                'status' => false,
-                'message' => 'Could not determine current Vimshottari Dasha from stored JHora sequence.',
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        if (empty($profile)) {
+            return 'No additional user profile data on record.';
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Current Dasha name
-        |
-        | Example:
-        | Saturn-Saturn-Kethu
-        |--------------------------------------------------------------------------
-        */
-
-        $parts = preg_split(
-            '/\s*[-–—]\s*/',
-            $currentPeriod['name']
-        );
-
-        $mahadasa = $parts[0] ?? null;
-        $antardasa = $parts[1] ?? null;
-        $pratyantardasa = $parts[2] ?? null;
-
-        /*
-        |--------------------------------------------------------------------------
-        | End of current period
-        |--------------------------------------------------------------------------
-        |
-        | The next sequence entry starts exactly when current period ends.
-        |
-        */
-
-        $end = $nextPeriod['start'] ?? null;
-
-        $result = [
-            'status' => true,
-
-            'source' => 'Stored JHora Vimshottari Dasha sequence',
-
-            'timezone' => $timezone,
-
-            'calculated_at' => $now->format('Y-m-d H:i:s'),
-
-            'current' => [
-                'mahadasa' => $mahadasa,
-                'antardasa' => $antardasa,
-                'pratyantardasa' => $pratyantardasa,
-
-                'full_period' => $currentPeriod['name'],
-
-                'start' => $currentPeriod['start']->format('Y-m-d H:i:s'),
-
-                'end' => $end
-                    ? $end->format('Y-m-d H:i:s')
-                    : null,
-            ],
-
-            'next' => $nextPeriod
-                ? [
-                    'full_period' => $nextPeriod['name'],
-                    'start' => $nextPeriod['start']->format('Y-m-d H:i:s'),
-                ]
-                : null,
-        ];
-
-        return json_encode(
-            $result,
-            JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
-        );
+        return json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     }
 
     /**
@@ -2713,283 +2215,164 @@ class AiChatApiController extends Controller
         return $rows;
     }
 
-    // private function getAstrologyContext(AiChatSession $session): string
-    // {
-    //     $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
-
-    //     if (!$chart) {
-    //         return 'No horoscope available.';
-    //     }
-
-    //     $relevantCharts = $session->expertise->relevant_chart ?? [];
-
-    //     if (is_string($relevantCharts)) {
-    //         $relevantCharts = json_decode($relevantCharts, true) ?? [];
-    //     }
-
-    //     if (!is_array($relevantCharts)) {
-    //         $relevantCharts = [];
-    //     }
-
-    //     $profile = [];
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Core Horoscope
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Ascendant'] = $chart->ascendant;
-    //     $profile['Sun Sign'] = $chart->sun_sign;
-    //     $profile['Moon Sign'] = $chart->moon_sign;
-    //     $profile['Moon Rashi'] = $chart->moon_rashi;
-
-    //     $profile['Nakshatra'] = [
-    //         'Name'   => $chart->nakshatra_name,
-    //         'Pada'   => $chart->nakshatra_pada,
-    //         'Lord'   => $chart->nakshatra_lord,
-    //     ];
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Verified Birth Details
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $rawData = is_array($chart->raw_data)
-    //         ? $chart->raw_data
-    //         : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //     if (!is_array($rawData)) {
-    //         $rawData = [];
-    //     }
-
-    //     $birthDetails = $rawData['birth_details'] ?? [];
-
-    //     if (is_array($birthDetails)) {
-    //         $profile['Verified Birth Details'] = [
-    //             'date' => $birthDetails['date'] ?? null,
-    //             'time' => $birthDetails['time'] ?? null,
-    //             'place' => $birthDetails['place'] ?? null,
-    //             'latitude' => $birthDetails['latitude'] ?? null,
-    //             'longitude' => $birthDetails['longitude'] ?? null,
-    //             'timezone' => $birthDetails['timezone'] ?? null,
-    //             'timezone_used' => $birthDetails['timezone_used'] ?? null,
-    //             'timezone_source' => $birthDetails['timezone_source'] ?? null,
-    //         ];
-    //     }
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Current Vimshottari Dasha
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Current Vimshottari Dasha'] =
-    //         json_decode(
-    //             $this->getCurrentDashaContext($session),
-    //             true
-    //         );
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Doshas
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Doshas'] = $this->formatDoshas($chart->doshas);
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Yogas
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Yogas'] = $this->formatYogas($chart->yogas);
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Planet Strength
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Planet Strength'] = $this->formatPlanetStrength(
-    //         $chart->planet_strength
-    //     );
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Strength Summary
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Shadbala'] = $this->formatShadbala(
-    //         $chart->shadbala
-    //     );
-
-    //     $profile['Bhava Bala'] = $this->formatBhavaBala(
-    //         $chart->bhava_bala
-    //     );
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Chara Karakas
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $profile['Chara Karakas'] = is_array($chart->chara_karakas)
-    //         ? $chart->chara_karakas
-    //         : json_decode((string) $chart->chara_karakas, true);
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Relevant Charts Only
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     foreach ($relevantCharts as $code) {
-
-    //         $column = self::CHART_COLUMN_MAP[$code] ?? null;
-
-    //         if (!$column) {
-    //             continue;
-    //         }
-
-    //         if (empty($chart->{$column})) {
-    //             continue;
-    //         }
-
-    //         $profile['Charts'][$code] = $this->formatChart(
-    //             $chart->{$column}
-    //         );
-    //     }
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Charts from raw_data
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     $missingCharts = [];
-
-    //     foreach ($relevantCharts as $code) {
-
-    //         if (!isset(self::CHART_COLUMN_MAP[$code])) {
-    //             $missingCharts[] = $code;
-    //         }
-    //     }
-
-    //     if (!empty($missingCharts) && !empty($chart->raw_data)) {
-
-    //         $raw = is_array($chart->raw_data)
-    //             ? $chart->raw_data
-    //             : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //         if (is_array($raw)) {
-
-    //             $extra = AstrologyChartExtractor::extract(
-    //                 $raw,
-    //                 $missingCharts
-    //             );
-
-    //             if (!empty($extra['charts'])) {
-
-    //                 foreach ($extra['charts'] as $name => $value) {
-
-    //                     $profile['Charts'][$name] = $value;
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Final
-    //     |--------------------------------------------------------------------------
-    //     */
-
-    //     return json_encode(
-    //         $profile,
-    //         JSON_UNESCAPED_UNICODE |
-    //         JSON_UNESCAPED_SLASHES
-    //     );
-    // }
-
     private function getAstrologyContext(AiChatSession $session): string
     {
-        $chart = UserAstrologyChart::where(
-            'user_id',
-            $session->user_id
-        )->first();
+        $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
 
         if (!$chart) {
-            return json_encode([
-                'status' => false,
-                'message' => 'Stored horoscope chart not found.',
-            ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            return 'No horoscope available.';
         }
 
-        $context = [
-            'source' => 'Stored AstroTring JHora horoscope',
+        $relevantCharts = $session->expertise->relevant_chart ?? [];
 
-            'birth_data' => [
-                'place' => $chart->place,
-                'state' => $chart->state,
-                'latitude' => $chart->latitude,
-                'longitude' => $chart->longitude,
-                'timezone' => $chart->timezone,
-            ],
+        if (is_string($relevantCharts)) {
+            $relevantCharts = json_decode($relevantCharts, true) ?? [];
+        }
 
-            'core_profile' => [
-                'ascendant' => $chart->ascendant,
-                'sun_sign' => $chart->sun_sign,
-                'moon_sign' => $chart->moon_sign,
-                'moon_rashi' => $chart->moon_rashi,
-                'nakshatra' => $chart->nakshatra,
-                'nakshatra_name' => $chart->nakshatra_name,
-                'nakshatra_pada' => $chart->nakshatra_pada,
-                'nakshatra_lord' => $chart->nakshatra_lord,
-            ],
+        if (!is_array($relevantCharts)) {
+            $relevantCharts = [];
+        }
 
-            'doshas' => $chart->doshas ?? [],
+        $profile = [];
 
-            'yogas' => $chart->yogas ?? [],
+        /*
+        |--------------------------------------------------------------------------
+        | Core Horoscope
+        |--------------------------------------------------------------------------
+        */
 
-            'planet_strength' => $chart->planet_strength ?? [],
+        $profile['Ascendant'] = $chart->ascendant;
+        $profile['Sun Sign'] = $chart->sun_sign;
+        $profile['Moon Sign'] = $chart->moon_sign;
+        $profile['Moon Rashi'] = $chart->moon_rashi;
 
-            'shadbala' => $chart->shadbala ?? [],
-
-            'bhava_bala' => $chart->bhava_bala ?? [],
-
-            'chara_karakas' => $chart->chara_karakas ?? [],
-
-            'charts' => [
-                'D1' => $chart->d1_chart ?? [],
-                'D2' => $chart->d2_chart ?? [],
-                'D7' => $chart->d7_chart ?? [],
-                'D9' => $chart->d9_chart ?? [],
-                'D10' => $chart->d10_chart ?? [],
-                'D12' => $chart->d12_chart ?? [],
-                'D20' => $chart->d20_chart ?? [],
-                'D24' => $chart->d24_chart ?? [],
-                'D60' => $chart->d60_chart ?? [],
-            ],
-
-            /*
-            |--------------------------------------------------------------------------
-            | MOST IMPORTANT
-            |--------------------------------------------------------------------------
-            */
-
-            'CURRENT_VIMSHOTTARI_DASHA' => json_decode(
-                $this->getCurrentDashaContext($session),
-                true
-            ),
+        $profile['Nakshatra'] = [
+            'Name'   => $chart->nakshatra_name,
+            'Pada'   => $chart->nakshatra_pada,
+            'Lord'   => $chart->nakshatra_lord,
         ];
 
+        /*
+        |--------------------------------------------------------------------------
+        | Doshas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Doshas'] = $this->formatDoshas($chart->doshas);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Yogas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Yogas'] = $this->formatYogas($chart->yogas);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Planet Strength
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Planet Strength'] = $this->formatPlanetStrength(
+            $chart->planet_strength
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Strength Summary
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Shadbala'] = $this->formatShadbala(
+            $chart->shadbala
+        );
+
+        $profile['Bhava Bala'] = $this->formatBhavaBala(
+            $chart->bhava_bala
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Chara Karakas
+        |--------------------------------------------------------------------------
+        */
+
+        $profile['Chara Karakas'] = is_array($chart->chara_karakas)
+            ? $chart->chara_karakas
+            : json_decode((string) $chart->chara_karakas, true);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Relevant Charts Only
+        |--------------------------------------------------------------------------
+        */
+
+        foreach ($relevantCharts as $code) {
+
+            $column = self::CHART_COLUMN_MAP[$code] ?? null;
+
+            if (!$column) {
+                continue;
+            }
+
+            if (empty($chart->{$column})) {
+                continue;
+            }
+
+            $profile['Charts'][$code] = $this->formatChart(
+                $chart->{$column}
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Charts from raw_data
+        |--------------------------------------------------------------------------
+        */
+
+        $missingCharts = [];
+
+        foreach ($relevantCharts as $code) {
+
+            if (!isset(self::CHART_COLUMN_MAP[$code])) {
+                $missingCharts[] = $code;
+            }
+        }
+
+        if (!empty($missingCharts) && !empty($chart->raw_data)) {
+
+            $raw = is_array($chart->raw_data)
+                ? $chart->raw_data
+                : (json_decode((string) $chart->raw_data, true) ?? []);
+
+            if (is_array($raw)) {
+
+                $extra = AstrologyChartExtractor::extract(
+                    $raw,
+                    $missingCharts
+                );
+
+                if (!empty($extra['charts'])) {
+
+                    foreach ($extra['charts'] as $name => $value) {
+
+                        $profile['Charts'][$name] = $value;
+                    }
+                }
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Final
+        |--------------------------------------------------------------------------
+        */
+
         return json_encode(
-            $context,
-            JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
+            $profile,
+            JSON_UNESCAPED_UNICODE |
+            JSON_UNESCAPED_SLASHES
         );
     }
 
@@ -3005,24 +2388,5 @@ class AiChatApiController extends Controller
         }
 
         return response()->json($payload, $status);
-    }
-
-    private function timezoneFromOffset($offset): string
-    {
-        if ($offset === null || $offset === '') {
-            return config('app.timezone', 'UTC');
-        }
-
-        $minutes = (int) round(((float) $offset) * 60);
-
-        $sign = $minutes >= 0 ? '+' : '-';
-        $minutes = abs($minutes);
-
-        return sprintf(
-            '%s%02d:%02d',
-            $sign,
-            intdiv($minutes, 60),
-            $minutes % 60
-        );
     }
 }

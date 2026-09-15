@@ -461,6 +461,311 @@ class UserApiController extends Controller
         }
     }
 
+    // public function update(Request $request)
+    // {
+    //     $user = auth()->user();
+
+    //     $validator = Validator::make($request->all(), [
+
+    //         'name' => 'nullable|string|max:255',
+    //         'email' => 'nullable|email|unique:users,email,' . $user->id,
+    //         'mobile' => 'nullable|digits:10|unique:users,mobile,' . $user->id,
+    //         'country_code' => 'nullable|string|max:5',
+
+    //         'gender' => 'nullable|in:male,female,other',
+    //         'dob' => 'nullable|date',
+    //         'marital_status' => 'nullable|string|max:100',
+    //         'occupation' => 'nullable|string|max:255',
+
+    //         'birth_time' => 'nullable|regex:/^\d{2}:\d{2}(:\d{2})?$/',
+
+    //         'birth_place' => 'nullable|array',
+    //         'birth_place.displayName' => 'nullable|string',
+    //         'birth_place.place' => 'nullable|string',
+    //         'birth_place.country' => 'nullable|string',
+    //         'birth_place.state' => 'nullable|string',
+    //         'birth_place.latitude' => 'nullable|numeric',
+    //         'birth_place.longitude' => 'nullable|numeric',
+    //         'birth_place.timezone' => 'nullable|numeric',
+    //         'birth_place.elevation' => 'nullable|numeric',
+
+    //         'about' => 'nullable|string|max:2000',
+    //         'address' => 'nullable|string|max:2000',
+    //         'pincode' => 'nullable|string|max:10',
+
+    //         'profile_image' => 'nullable|string|max:6000000',
+
+    //         'astrologer_id' => 'nullable|exists:users,id',
+    //         'rating' => 'nullable|integer|min:1|max:5',
+    //         'review' => 'nullable|string|max:2000',
+
+    //     ]);
+
+    //     if ($validator->fails()) {
+
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => $validator->errors()->first(),
+    //         ], 422);
+
+    //     }
+
+    //     DB::beginTransaction();
+
+    //     try {
+
+    //         if ($request->filled('profile_image')) {
+
+    //             $user->profile_image = $this->saveBase64Image(
+    //                 $request->profile_image,
+    //                 'user',
+    //                 $user->profile_image
+    //             );
+
+    //         }
+
+    //         $fields = [
+
+    //             'name',
+    //             'email',
+    //             'mobile',
+    //             'country_code',
+    //             'gender',
+    //             'dob',
+    //             'birth_place',
+    //             'marital_status',
+    //             'occupation',
+    //             'about',
+    //             'address',
+    //             'pincode',
+
+    //         ];
+
+    //         foreach ($fields as $field) {
+
+    //             if ($request->has($field)) {
+
+    //                 $user->{$field} = $request->{$field};
+
+    //             }
+
+    //         }
+
+    //         if ($request->has('birth_time')) {
+
+    //             $time = $request->birth_time;
+
+    //             if (!empty($time) && strlen($time) == 5) {
+
+    //                 $time .= ':00';
+
+    //             }
+
+    //             $user->birth_time = $time;
+
+    //         }
+
+    //         $user->modified_by = $user->id;
+
+    //         $user->save();
+
+    //             try {
+
+    //         app(\App\Services\AstrologyChartService::class)
+    //             ->generate($user);
+
+    //     } catch (\Throwable $e) {
+
+    //         \Log::error('Astrology Regeneration Failed', [
+
+    //             'user_id' => $user->id,
+    //             'message' => $e->getMessage(),
+
+    //         ]);
+
+    //     }
+
+    //     if ($request->filled('astrologer_id') && $request->filled('rating')) {
+
+    //         $astrologer = User::where('id', $request->astrologer_id)
+    //             ->where('type', 'astro')
+    //             ->first();
+
+    //         if (! $astrologer) {
+
+    //             throw new \Exception('Invalid astrologer.');
+
+    //         }
+
+    //         Review::updateOrCreate(
+
+    //             [
+    //                 'user_id'       => $user->id,
+    //                 'astrologer_id' => $astrologer->id,
+    //             ],
+
+    //             [
+    //                 'rating' => $request->rating,
+    //                 'review' => $request->review,
+    //             ]
+
+    //         );
+
+    //         $stats = Review::where('astrologer_id', $astrologer->id)
+    //             ->selectRaw('COUNT(*) as total_reviews')
+    //             ->selectRaw('AVG(rating) as average_rating')
+    //             ->first();
+
+    //         $astrologer->rating = round($stats->average_rating, 2);
+    //         $astrologer->rating_count = $stats->total_reviews;
+    //         $astrologer->save();
+
+    //     }
+
+    //     $user->load([
+
+    //         'wallet',
+    //         'reviews.astrologer',
+
+    //     ]);
+
+    //     $reviews = $user->reviews
+    //         ->sortByDesc('created_at')
+    //         ->values()
+    //         ->map(function ($review) {
+
+    //             return [
+
+    //                 'review_id' => $review->id,
+
+    //                 'astrologer' => [
+
+    //                     'id' => optional($review->astrologer)->id,
+
+    //                     'code' => optional($review->astrologer)->code,
+
+    //                     'name' => optional($review->astrologer)->name,
+
+    //                     'profile_image' => optional($review->astrologer)->profile_image
+    //                         ? asset('storage/user/' . $review->astrologer->profile_image)
+    //                         : null,
+
+    //                     'rating' => (float)(optional($review->astrologer)->rating ?? 0),
+
+    //                     'rating_count' => (int)(optional($review->astrologer)->rating_count ?? 0),
+
+    //                 ],
+
+    //                 'rating' => (int)$review->rating,
+
+    //                 'review' => $review->review,
+
+    //                 'created_at' => $review->created_at->format('d M Y h:i A'),
+
+    //                 'updated_at' => $review->updated_at->format('d M Y h:i A'),
+
+    //             ];
+
+    //         });
+
+    //     DB::commit();
+
+    //     return response()->json([
+
+    //         'status' => true,
+
+    //         'message' => 'Profile updated successfully',
+
+    //         'user' => [
+
+    //             'id' => $user->id,
+
+    //             'code' => $user->code,
+
+    //             'username' => $user->username,
+
+    //             'name' => $user->name,
+
+    //             'email' => $user->email,
+
+    //             'mobile' => $user->mobile,
+
+    //             'country_code' => $user->country_code,
+
+    //             'profile_image' => $user->profile_image
+    //                 ? asset('storage/user/' . $user->profile_image)
+    //                 : null,
+
+    //             'gender' => $user->gender,
+
+    //             'dob' => $user->dob,
+
+    //             'birth_time' => $user->birth_time,
+
+    //             'birth_place' => $user->birth_place,
+
+    //             'marital_status' => $user->marital_status,
+
+    //             'occupation' => $user->occupation,
+
+    //             'about' => $user->about,
+
+    //             'address' => $user->address,
+
+    //             'pincode' => $user->pincode,
+
+    //             'status' => (int) $user->status,
+
+    //             'is_online' => (int) $user->is_online,
+
+    //         ],
+
+    //         'wallet' => [
+
+    //             'balance' => (float) ($user->wallet->balance ?? 0),
+
+    //             'total_added' => (float) ($user->wallet->total_added ?? 0),
+
+    //             'total_spent' => (float) ($user->wallet->total_spent ?? 0),
+
+    //             'last_recharge_amount' => (float) ($user->wallet->last_recharge_amount ?? 0),
+
+    //             'last_recharge_at' => $user->wallet->last_recharge_at,
+
+    //         ],
+
+    //         'reviews' => $reviews,
+
+    //     ]);
+
+    //     } catch (\Throwable $e) {
+
+    //         DB::rollBack();
+
+    //         \Log::error('Profile Update Error', [
+
+    //             'message' => $e->getMessage(),
+
+    //             'file' => $e->getFile(),
+
+    //             'line' => $e->getLine(),
+
+    //             'trace' => $e->getTraceAsString(),
+
+    //         ]);
+
+    //         return response()->json([
+
+    //             'status' => false,
+
+    //             'message' => 'Failed to update profile',
+
+    //             'error' => $e->getMessage(),
+
+    //         ], 500);
+
+    //     }
+    // }
     public function update(Request $request)
     {
         $user = auth()->user();
@@ -514,6 +819,25 @@ class UserApiController extends Controller
 
         try {
 
+            /*
+            |--------------------------------------------------------------------------
+            | Store Old Astrology Details
+            |--------------------------------------------------------------------------
+            | We need these values before updating the user so that we can
+            | determine whether the astrology chart actually needs regeneration.
+            |--------------------------------------------------------------------------
+            */
+
+            $oldDob = $user->dob;
+            $oldBirthTime = $user->birth_time;
+            $oldBirthPlace = $user->birth_place;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Profile Image
+            |--------------------------------------------------------------------------
+            */
+
             if ($request->filled('profile_image')) {
 
                 $user->profile_image = $this->saveBase64Image(
@@ -524,8 +848,13 @@ class UserApiController extends Controller
 
             }
 
-            $fields = [
+            /*
+            |--------------------------------------------------------------------------
+            | Update User Fields
+            |--------------------------------------------------------------------------
+            */
 
+            $fields = [
                 'name',
                 'email',
                 'mobile',
@@ -538,205 +867,244 @@ class UserApiController extends Controller
                 'about',
                 'address',
                 'pincode',
-
             ];
 
             foreach ($fields as $field) {
 
                 if ($request->has($field)) {
-
                     $user->{$field} = $request->{$field};
-
                 }
 
             }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Birth Time
+            |--------------------------------------------------------------------------
+            */
 
             if ($request->has('birth_time')) {
 
                 $time = $request->birth_time;
 
                 if (!empty($time) && strlen($time) == 5) {
-
                     $time .= ':00';
-
                 }
 
                 $user->birth_time = $time;
-
             }
 
             $user->modified_by = $user->id;
 
+            /*
+            |--------------------------------------------------------------------------
+            | Check Whether Astrology Details Changed
+            |--------------------------------------------------------------------------
+            */
+
+            $astrologyDataChanged =
+                $oldDob != $user->dob ||
+                $oldBirthTime != $user->birth_time ||
+                $oldBirthPlace != $user->birth_place;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Save Updated User
+            |--------------------------------------------------------------------------
+            */
+
             $user->save();
 
-                try {
+            /*
+            |--------------------------------------------------------------------------
+            | Regenerate Astrology Chart
+            |--------------------------------------------------------------------------
+            |
+            | If DOB, birth time or birth place changed:
+            |
+            | 1. Delete old chart
+            | 2. Generate new chart using updated user details
+            |
+            | This keeps only the latest chart for the user.
+            |--------------------------------------------------------------------------
+            */
 
-            app(\App\Services\AstrologyChartService::class)
-                ->generate($user);
+            if ($astrologyDataChanged) {
 
-        } catch (\Throwable $e) {
+                DB::table('user_astrology_charts')
+                    ->where('user_id', $user->id)
+                    ->delete();
 
-            \Log::error('Astrology Regeneration Failed', [
-
-                'user_id' => $user->id,
-                'message' => $e->getMessage(),
-
-            ]);
-
-        }
-
-        if ($request->filled('astrologer_id') && $request->filled('rating')) {
-
-            $astrologer = User::where('id', $request->astrologer_id)
-                ->where('type', 'astro')
-                ->first();
-
-            if (! $astrologer) {
-
-                throw new \Exception('Invalid astrologer.');
-
+                app(\App\Services\AstrologyChartService::class)
+                    ->generate($user);
             }
 
-            Review::updateOrCreate(
+            /*
+            |--------------------------------------------------------------------------
+            | Review
+            |--------------------------------------------------------------------------
+            */
 
-                [
-                    'user_id'       => $user->id,
-                    'astrologer_id' => $astrologer->id,
-                ],
+            if ($request->filled('astrologer_id') && $request->filled('rating')) {
 
-                [
-                    'rating' => $request->rating,
-                    'review' => $request->review,
-                ]
+                $astrologer = User::where('id', $request->astrologer_id)
+                    ->where('type', 'astro')
+                    ->first();
 
-            );
+                if (!$astrologer) {
+                    throw new \Exception('Invalid astrologer.');
+                }
 
-            $stats = Review::where('astrologer_id', $astrologer->id)
-                ->selectRaw('COUNT(*) as total_reviews')
-                ->selectRaw('AVG(rating) as average_rating')
-                ->first();
+                Review::updateOrCreate(
 
-            $astrologer->rating = round($stats->average_rating, 2);
-            $astrologer->rating_count = $stats->total_reviews;
-            $astrologer->save();
-
-        }
-
-        $user->load([
-
-            'wallet',
-            'reviews.astrologer',
-
-        ]);
-
-        $reviews = $user->reviews
-            ->sortByDesc('created_at')
-            ->values()
-            ->map(function ($review) {
-
-                return [
-
-                    'review_id' => $review->id,
-
-                    'astrologer' => [
-
-                        'id' => optional($review->astrologer)->id,
-
-                        'code' => optional($review->astrologer)->code,
-
-                        'name' => optional($review->astrologer)->name,
-
-                        'profile_image' => optional($review->astrologer)->profile_image
-                            ? asset('storage/user/' . $review->astrologer->profile_image)
-                            : null,
-
-                        'rating' => (float)(optional($review->astrologer)->rating ?? 0),
-
-                        'rating_count' => (int)(optional($review->astrologer)->rating_count ?? 0),
-
+                    [
+                        'user_id' => $user->id,
+                        'astrologer_id' => $astrologer->id,
                     ],
 
-                    'rating' => (int)$review->rating,
+                    [
+                        'rating' => $request->rating,
+                        'review' => $request->review,
+                    ]
 
-                    'review' => $review->review,
+                );
 
-                    'created_at' => $review->created_at->format('d M Y h:i A'),
+                $stats = Review::where('astrologer_id', $astrologer->id)
+                    ->selectRaw('COUNT(*) as total_reviews')
+                    ->selectRaw('AVG(rating) as average_rating')
+                    ->first();
 
-                    'updated_at' => $review->updated_at->format('d M Y h:i A'),
+                $astrologer->rating = round($stats->average_rating, 2);
+                $astrologer->rating_count = $stats->total_reviews;
+                $astrologer->save();
+            }
 
-                ];
+            /*
+            |--------------------------------------------------------------------------
+            | Load Updated User Data
+            |--------------------------------------------------------------------------
+            */
 
-            });
+            $user->load([
+                'wallet',
+                'reviews.astrologer',
+            ]);
 
-        DB::commit();
+            $reviews = $user->reviews
+                ->sortByDesc('created_at')
+                ->values()
+                ->map(function ($review) {
 
-        return response()->json([
+                    return [
 
-            'status' => true,
+                        'review_id' => $review->id,
 
-            'message' => 'Profile updated successfully',
+                        'astrologer' => [
 
-            'user' => [
+                            'id' => optional($review->astrologer)->id,
 
-                'id' => $user->id,
+                            'code' => optional($review->astrologer)->code,
 
-                'code' => $user->code,
+                            'name' => optional($review->astrologer)->name,
 
-                'username' => $user->username,
+                            'profile_image' => optional($review->astrologer)->profile_image
+                                ? asset('storage/user/' . $review->astrologer->profile_image)
+                                : null,
 
-                'name' => $user->name,
+                            'rating' => (float) (
+                                optional($review->astrologer)->rating ?? 0
+                            ),
 
-                'email' => $user->email,
+                            'rating_count' => (int) (
+                                optional($review->astrologer)->rating_count ?? 0
+                            ),
 
-                'mobile' => $user->mobile,
+                        ],
 
-                'country_code' => $user->country_code,
+                        'rating' => (int) $review->rating,
 
-                'profile_image' => $user->profile_image
-                    ? asset('storage/user/' . $user->profile_image)
-                    : null,
+                        'review' => $review->review,
 
-                'gender' => $user->gender,
+                        'created_at' => $review->created_at
+                            ->format('d M Y h:i A'),
 
-                'dob' => $user->dob,
+                        'updated_at' => $review->updated_at
+                            ->format('d M Y h:i A'),
 
-                'birth_time' => $user->birth_time,
+                    ];
+                });
 
-                'birth_place' => $user->birth_place,
+            DB::commit();
 
-                'marital_status' => $user->marital_status,
+            return response()->json([
 
-                'occupation' => $user->occupation,
+                'status' => true,
 
-                'about' => $user->about,
+                'message' => 'Profile updated successfully',
 
-                'address' => $user->address,
+                'user' => [
 
-                'pincode' => $user->pincode,
+                    'id' => $user->id,
 
-                'status' => (int) $user->status,
+                    'code' => $user->code,
 
-                'is_online' => (int) $user->is_online,
+                    'username' => $user->username,
 
-            ],
+                    'name' => $user->name,
 
-            'wallet' => [
+                    'email' => $user->email,
 
-                'balance' => (float) ($user->wallet->balance ?? 0),
+                    'mobile' => $user->mobile,
 
-                'total_added' => (float) ($user->wallet->total_added ?? 0),
+                    'country_code' => $user->country_code,
 
-                'total_spent' => (float) ($user->wallet->total_spent ?? 0),
+                    'profile_image' => $user->profile_image
+                        ? asset('storage/user/' . $user->profile_image)
+                        : null,
 
-                'last_recharge_amount' => (float) ($user->wallet->last_recharge_amount ?? 0),
+                    'gender' => $user->gender,
 
-                'last_recharge_at' => $user->wallet->last_recharge_at,
+                    'dob' => $user->dob,
 
-            ],
+                    'birth_time' => $user->birth_time,
 
-            'reviews' => $reviews,
+                    'birth_place' => $user->birth_place,
 
-        ]);
+                    'marital_status' => $user->marital_status,
+
+                    'occupation' => $user->occupation,
+
+                    'about' => $user->about,
+
+                    'address' => $user->address,
+
+                    'pincode' => $user->pincode,
+
+                    'status' => (int) $user->status,
+
+                    'is_online' => (int) $user->is_online,
+
+                ],
+
+                'wallet' => [
+
+                    'balance' => (float) ($user->wallet->balance ?? 0),
+
+                    'total_added' => (float) ($user->wallet->total_added ?? 0),
+
+                    'total_spent' => (float) ($user->wallet->total_spent ?? 0),
+
+                    'last_recharge_amount' => (float) (
+                        $user->wallet->last_recharge_amount ?? 0
+                    ),
+
+                    'last_recharge_at' => $user->wallet->last_recharge_at,
+
+                ],
+
+                'reviews' => $reviews,
+
+            ]);
 
         } catch (\Throwable $e) {
 
@@ -763,7 +1131,6 @@ class UserApiController extends Controller
                 'error' => $e->getMessage(),
 
             ], 500);
-
         }
     }
 
