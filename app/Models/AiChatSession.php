@@ -19,6 +19,8 @@ class AiChatSession extends Model
         'chat_last_seen_at',
         'chat_billed_minutes',
         'chat_free_used',
+        'pending_questions',
+        'free_messages_used',
         'paid_messages',
         'total_amount',
         'started_at',
@@ -27,10 +29,15 @@ class AiChatSession extends Model
         'status',
     ];
 
+    protected $hidden = [
+        'pending_questions',
+    ];
+
     protected $casts = [
         'chat_active_since' => 'datetime',
         'chat_last_seen_at' => 'datetime',
         'chat_free_used' => 'boolean',
+        'pending_questions' => 'array',
         'total_amount' => 'decimal:2',
         'started_at' => 'datetime',
         'last_message_at' => 'datetime',

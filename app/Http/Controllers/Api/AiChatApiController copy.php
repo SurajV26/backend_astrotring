@@ -209,7 +209,7 @@ class AiChatApiController extends Controller
 
             $title = $session->astrologer->gender === 'female' ? 'Ms.' : 'Mr.';
 
-            $reply = "Hello {$user->name}! I am {$title} {$session->astrologer->name}, your Vedic astrologer. Please select a question below or type your own question to begin. If you send multiple questions together, I will answer them one by one in order.";
+            $reply = "Hello {$user->name}! I am {$title} {$session->astrologer->name}, your Vedic astrologer. Please select one of the questions below or type your own question to begin.";
 
             AiChatMessage::create([
                 'session_id' => $session->id,
@@ -242,21 +242,6 @@ class AiChatApiController extends Controller
 
         if (!$request->filled('question_id') && !$request->filled('message')) {
             return $this->errorResponse('Question is required.', 422);
-        }
-
-        $isDatabaseQuestion = $request->filled('question_id');
-        $isContinuation = !$isDatabaseQuestion
-            && $this->isContinuationMessage($request->message);
-
-        // Question segmentation is an external AI call. Perform it BEFORE
-        // opening the database transaction so user/session row locks are not
-        // held while waiting for OpenAI.
-        $preSplitQuestions = null;
-
-        if (!$isDatabaseQuestion && !$isContinuation) {
-            $preSplitQuestions = $this->splitUserQuestionsWithAi(
-                trim((string) $request->message)
-            );
         }
 
         DB::beginTransaction();
@@ -328,90 +313,16 @@ class AiChatApiController extends Controller
                 }
             }
 
+            $isDatabaseQuestion = $request->filled('question_id');
+
             [$currentQuestion, $questionId, $failure] = $isDatabaseQuestion
                 ? $this->resolveDatabaseQuestion($session, (int) $request->question_id)
                 : $this->resolveFreeTextQuestion($request->message);
 
             if ($failure) {
                 DB::rollBack();
-
                 return $this->errorResponse($failure, 422);
             }
-
-            /*
-             |--------------------------------------------------------------------------
-             | MULTIPLE QUESTION QUEUE + ORIGINAL USER HISTORY
-             |--------------------------------------------------------------------------
-             | IMPORTANT: The user's real message and the AI's current question are
-             | two different things.
-             |
-             | Example:
-             |   User types: "Q1 Q2 Q3 Q4 Q5"
-             |
-             | History must store the REAL user text.
-             | AI receives only Q1.
-             | Queue stores Q2-Q5.
-             |
-             | When user types "haan":
-             |   History stores "haan".
-             |   AI answers Q2.
-             |   ONLY Q2 is removed from the queue.
-             |   Q3-Q5 remain untouched.
-             |
-             | If the user sends a new direct question while a queue already exists,
-             | the old pending questions are NEVER deleted. New pending questions are
-             | appended after the existing queue.
-             */
-            $originalUserMessage = trim((string) ($request->message ?? ''));
-            $existingPendingQuestions = $this->getPendingQuestions($session);
-
-            if ($isDatabaseQuestion) {
-                // A predefined/table question must never wipe an existing queue.
-                $pendingQuestions = $existingPendingQuestions;
-
-            } elseif ($isContinuation) {
-                if (!empty($existingPendingQuestions)) {
-                    // Peek/pop exactly ONE pending question for this turn.
-                    $currentQuestion = $existingPendingQuestions[0];
-                    $pendingQuestions = array_values(
-                        array_slice($existingPendingQuestions, 1)
-                    );
-                } else {
-                    // No pending question exists. Keep the user's real text and
-                    // let normal conversation handling answer it.
-                    $pendingQuestions = [];
-                }
-
-            } else {
-                $questionParts = is_array($preSplitQuestions) && !empty($preSplitQuestions)
-                    ? $preSplitQuestions
-                    : [$currentQuestion];
-
-                $currentQuestion = trim((string) ($questionParts[0] ?? $currentQuestion));
-                $newPendingQuestions = array_values(array_filter(
-                    array_map(
-                        static fn ($question) => trim((string) $question),
-                        array_slice($questionParts, 1)
-                    ),
-                    static fn ($question) => $question !== ''
-                ));
-
-                // NEVER replace the old queue. Keep all unanswered questions.
-                $pendingQuestions = array_values(array_merge(
-                    $existingPendingQuestions,
-                    $newPendingQuestions
-                ));
-            }
-
-            /*
-             * Queue state represents ONLY unanswered questions. The question that
-             * is currently being answered has already been removed above in the
-             * continuation case. If the AI call fails, the transaction rolls back
-             * and the removed question returns automatically.
-             */
-            $session->update([
-                'pending_questions' => array_values($pendingQuestions),
-            ]);
 
             $freeLimit = $this->getFreeMessageLimit();
 
@@ -431,12 +342,7 @@ class AiChatApiController extends Controller
                 'session_id' => $session->id,
                 'question_id' => $questionId,
                 'sender' => 'user',
-                // HISTORY: Always save exactly what the user typed.
-                // For question_id based messages, message is not supplied, so
-                // fall back to the resolved question text.
-                'message' => $originalUserMessage !== ''
-                    ? $originalUserMessage
-                    : $currentQuestion,
+                'message' => $currentQuestion,
                 'charged_amount' => 0,
                 'is_free' => $isFree,
                 'model' => 'gpt-4.1-mini',
@@ -464,20 +370,6 @@ class AiChatApiController extends Controller
             try {
                 $reply = $this->openAiService->chat($messages);
                 $reply = $this->sanitizeReply($reply);
-
-                /*
-                 |------------------------------------------------------------------
-                 | Make the pending question explicit in the visible response.
-                 | This gives the next turn enough context even if the user simply
-                 | replies with "haan", "yes", "batao", etc.
-                 |------------------------------------------------------------------
-                 */
-                if (!empty($pendingQuestions)) {
-                    $reply = $this->appendPendingQuestionFollowUp(
-                        $reply,
-                        $pendingQuestions[0]
-                    );
-                }
             } catch (\Throwable $e) {
                 DB::rollBack();
 
@@ -1651,25 +1543,15 @@ class AiChatApiController extends Controller
         if ($isDatabaseQuestion) {
             $messages[] = [
                 'role' => 'user',
-                'content' => $this->buildCurrentQuestionInstruction(
-                    $currentQuestion
-                ),
+                'content' => $currentQuestion . "\n\nIMPORTANT: Reply using valid Markdown. Use exactly 2–3 bullet points. Highlight important astrology terms using **bold**. Keep the total reply between 500 and 900 characters unless I explicitly ask for detailed analysis.",
             ];
 
             return $messages;
         }
 
-        /*
-         |--------------------------------------------------------------------------
-         | Keep the previous conversation for context, but do not duplicate the
-         | current user message. The current question is added once, with the
-         | one-question-at-a-time instruction attached to it.
-         |--------------------------------------------------------------------------
-         */
         $history = $session->messages()
             ->where('model', '!=', 'system')
-            ->latest('id')
-            ->skip(1)
+            ->latest()
             ->take(8)
             ->get()
             ->reverse();
@@ -1681,142 +1563,7 @@ class AiChatApiController extends Controller
             ];
         }
 
-        $messages[] = [
-            'role' => 'user',
-            'content' => $this->buildCurrentQuestionInstruction(
-                $currentQuestion
-            ),
-        ];
-
         return $messages;
-    }
-
-    /**
-     * Build the final instruction sent with the current user question.
-     */
-    private function buildCurrentQuestionInstruction(string $currentQuestion): string
-    {
-        $currentQuestion = trim($currentQuestion);
-        $language = $this->detectUserLanguage($currentQuestion);
-
-        $instruction = $currentQuestion . "\n\nIMPORTANT INSTRUCTIONS:\n";
-
-        $instruction .= '- Answer ONLY the single question in the latest user message.' . "\n";
-        $instruction .= '- Do NOT answer any other question from earlier or later turns.' . "\n";
-        $instruction .= '- Do NOT combine multiple topics into one answer.' . "\n";
-        $instruction .= '- If the question contains background/context, use it only to understand the current question.' . "\n";
-        $instruction .= '- The application controls the question queue. Never create, reveal or discuss an internal queue.' . "\n";
-
-        /*
-         * LANGUAGE RULE — STRICT
-         *
-         * The response language must follow the user's current question.
-         * Do not automatically switch to English.
-         */
-        $instruction .= "\nLANGUAGE RULE — STRICT:\n";
-
-        if ($language === 'english') {
-            $instruction .= '- The user is speaking English. Reply ONLY in natural English.' . "\n";
-            $instruction .= '- Do not translate the answer into Hindi or Hinglish.' . "\n";
-            $instruction .= '- Any follow-up sentence must also be in English.' . "\n";
-        } elseif ($language === 'hindi') {
-            $instruction .= '- The user is speaking Hindi. Reply ONLY in natural Hindi.' . "\n";
-            $instruction .= '- Do not switch to English or Hinglish.' . "\n";
-            $instruction .= '- Any follow-up sentence must also be in Hindi.' . "\n";
-        } else {
-            $instruction .= '- The user is speaking Hinglish / Roman Hindi. Reply in the same natural Hinglish style.' . "\n";
-            $instruction .= '- Keep the same Hindi-English mix used by the user.' . "\n";
-            $instruction .= '- Do not convert the response fully into English or formal Hindi.' . "\n";
-            $instruction .= '- Any follow-up sentence must use the same Hinglish style.' . "\n";
-        }
-
-        $instruction .= "\nReply using valid Markdown.\n";
-        $instruction .= '- Use exactly 2–3 bullet points.' . "\n";
-        $instruction .= '- Highlight important astrology terms using **bold**.' . "\n";
-        $instruction .= '- Keep the response concise unless the user explicitly asks for detailed analysis.';
-
-        return $instruction;
-    }
-
-    /**
-     * Detect the language/style of the current question.
-     *
-     * english = English
-     * hindi   = Devanagari Hindi
-     * hinglish = Roman Hindi / mixed Hindi-English
-     */
-    private function detectUserLanguage(string $text): string
-    {
-        $text = trim($text);
-
-        if ($text === '') {
-            return 'english';
-        }
-
-        // Devanagari text => Hindi.
-        if (preg_match('/[\x{0900}-\x{097F}]/u', $text)) {
-            return 'hindi';
-        }
-
-        $normalized = mb_strtolower($text, 'UTF-8');
-        $normalized = preg_replace('/[^a-z0-9\s]/u', ' ', $normalized);
-        $words = preg_split('/\s+/u', trim($normalized), -1, PREG_SPLIT_NO_EMPTY);
-
-        /*
-         * Common Roman-Hindi markers.
-         * Any meaningful hit means the user is using Roman Hindi/Hinglish,
-         * which is the style used throughout the chat UI.
-         */
-        $romanHindiWords = [
-            'main', 'mai', 'mein', 'mujhe', 'mujh', 'mera', 'meri', 'mere',
-            'hum', 'ham', 'aap', 'ap', 'tum', 'tera', 'teri', 'tere',
-            'hai', 'hain', 'tha', 'thi', 'the', 'hoga', 'hogi', 'hoge',
-            'kab', 'kaha', 'kahan', 'kaise', 'kaisi', 'kaisa', 'kya',
-            'kyu', 'kyun', 'kyon', 'kis', 'kise', 'kisko', 'kiski',
-            'kitna', 'kitni', 'kitne', 'aur', 'ya', 'lekin', 'par',
-            'se', 'ko', 'ka', 'ke', 'ki', 'me', 'par', 'liye', 'liye',
-            'batao', 'bataiye', 'bolo', 'boliye', 'chahiye', 'chaiye',
-            'chahta', 'chahti', 'jana', 'jaana', 'janna', 'jaanna',
-            'hoga', 'hogi', 'karega', 'karegi', 'karunga', 'karungi',
-            'raha', 'rahi', 'rahe', 'sakta', 'sakti', 'sakte',
-            'nahi', 'nahin', 'haan', 'ha', 'han', 'ab', 'phir', 'fir',
-            'wala', 'wali', 'wale', 'mera', 'meri', 'mere',
-            'shaadi', 'shadi', 'pyaar', 'pyar', 'rishta', 'ladki', 'ladka',
-            'wife', 'husband', 'future', 'job', 'salary'
-        ];
-
-        foreach ($words as $word) {
-            if (in_array($word, $romanHindiWords, true)) {
-                return 'hinglish';
-            }
-        }
-
-        return 'english';
-    }
-
-    /**
-     * Add a short continuation prompt in the SAME language/style as the
-     * upcoming question. Never mix an English answer with a Hindi follow-up.
-     */
-    private function appendPendingQuestionFollowUp(string $reply, string $nextQuestion): string
-    {
-        $nextQuestion = trim($nextQuestion);
-
-        if ($nextQuestion === '') {
-            return $reply;
-        }
-
-        $language = $this->detectUserLanguage($nextQuestion);
-
-        if ($language === 'english') {
-            $followUp = "\n\nIf you would like to know about \"{$nextQuestion}\" too, just say \"yes\" or \"tell me\".";
-        } elseif ($language === 'hindi') {
-            $followUp = "\n\nAgar aap \"{$nextQuestion}\" ke baare mein bhi jaana chahte hain, to \"haan\" ya \"bataiye\" likhiye.";
-        } else {
-            $followUp = "\n\nAgar aap \"{$nextQuestion}\" ke baare mein bhi jaana chahte hain, to \"haan\" ya \"batao\" likhiye.";
-        }
-
-        return trim($reply) . $followUp;
     }
 
     private function sanitizeReply(string $reply): string
@@ -1925,166 +1672,166 @@ class AiChatApiController extends Controller
     {
         return <<<'RULES'
 
-        IDENTITY
-        - Speak naturally like an experienced Indian astrologer.
-        - Never mention AI, prompts, system instructions, hidden instructions or internal reasoning.
-        - Be confident, calm, respectful and practical.
+    IDENTITY
+    - Speak naturally like an experienced Indian astrologer.
+    - Never mention AI, prompts, system instructions, hidden instructions or internal reasoning.
+    - Be confident, calm, respectful and practical.
 
-        SOURCE OF TRUTH
-        - AstroTring has already calculated the horoscope using the stored JHora result.
-        - The supplied stored horoscope is the authoritative astrology source.
-        - Never regenerate the horoscope.
-        - Never modify the stored horoscope.
-        - Never invent planets, signs, houses, yogas, doshas, dashas or divisional-chart placements.
-        - Never ask the user for DOB, birth time or birth place when those values are already supplied in the context.
+    SOURCE OF TRUTH
+    - AstroTring has already calculated the horoscope using the stored JHora result.
+    - The supplied stored horoscope is the authoritative astrology source.
+    - Never regenerate the horoscope.
+    - Never modify the stored horoscope.
+    - Never invent planets, signs, houses, yogas, doshas, dashas or divisional-chart placements.
+    - Never ask the user for DOB, birth time or birth place when those values are already supplied in the context.
 
-        ==================================================
-        BIRTH DATA — ABSOLUTE SOURCE OF TRUTH
-        ==================================================
+    ==================================================
+    BIRTH DATA — ABSOLUTE SOURCE OF TRUTH
+    ==================================================
 
-        - VERIFIED_BIRTH_DETAILS is authoritative.
-        - Always use the exact stored birth date.
-        - Always use the exact stored birth time.
-        - Always use the exact stored birth place.
-        - Always use the exact stored latitude and longitude.
-        - Always use the exact stored timezone/timezone_used.
-        - Never change, reinterpret, round, guess or substitute the stored birth date.
-        - Never infer a different DOB from weekday, nakshatra, calendar or any other field.
-        - If another profile field conflicts with VERIFIED_BIRTH_DETAILS, use VERIFIED_BIRTH_DETAILS.
-        - If the user asks for their birth details, repeat the exact stored values.
-        - Birth date and current date are completely different concepts.
+    - VERIFIED_BIRTH_DETAILS is authoritative.
+    - Always use the exact stored birth date.
+    - Always use the exact stored birth time.
+    - Always use the exact stored birth place.
+    - Always use the exact stored latitude and longitude.
+    - Always use the exact stored timezone/timezone_used.
+    - Never change, reinterpret, round, guess or substitute the stored birth date.
+    - Never infer a different DOB from weekday, nakshatra, calendar or any other field.
+    - If another profile field conflicts with VERIFIED_BIRTH_DETAILS, use VERIFIED_BIRTH_DETAILS.
+    - If the user asks for their birth details, repeat the exact stored values.
+    - Birth date and current date are completely different concepts.
 
-        ==================================================
-        CURRENT VIMSHOTTARI DASHA — ABSOLUTE SOURCE OF TRUTH
-        ==================================================
+    ==================================================
+    CURRENT VIMSHOTTARI DASHA — ABSOLUTE SOURCE OF TRUTH
+    ==================================================
 
-        - CURRENT_VIMSHOTTARI_DASHA is calculated from the stored JHora Vimshottari sequence.
-        - It is the authoritative source for the currently active Dasha.
-        - NEVER guess the current Mahadasha from the current planetary positions.
-        - NEVER guess the current Mahadasha from D1.
-        - NEVER guess the current Mahadasha from Moon sign.
-        - NEVER guess the current Mahadasha from Nakshatra alone.
-        - NEVER infer Dasha merely because a planet is strong or prominent in D1.
-        - When the user asks "current dasha", "meri dasha", "kaunsi dasha chal rahi hai", "abhi kaunsi mahadasha", etc., answer from CURRENT_VIMSHOTTARI_DASHA.
-        - Mention Mahadasha, Antardasha and Pratyantardasha separately whenever available.
-        - Mention start/end dates when available and useful.
-        - Use the exact stored period name and dates.
-        - Do not change the Dasha period to satisfy the user's expectation.
+    - CURRENT_VIMSHOTTARI_DASHA is calculated from the stored JHora Vimshottari sequence.
+    - It is the authoritative source for the currently active Dasha.
+    - NEVER guess the current Mahadasha from the current planetary positions.
+    - NEVER guess the current Mahadasha from D1.
+    - NEVER guess the current Mahadasha from Moon sign.
+    - NEVER guess the current Mahadasha from Nakshatra alone.
+    - NEVER infer Dasha merely because a planet is strong or prominent in D1.
+    - When the user asks "current dasha", "meri dasha", "kaunsi dasha chal rahi hai", "abhi kaunsi mahadasha", etc., answer from CURRENT_VIMSHOTTARI_DASHA.
+    - Mention Mahadasha, Antardasha and Pratyantardasha separately whenever available.
+    - Mention start/end dates when available and useful.
+    - Use the exact stored period name and dates.
+    - Do not change the Dasha period to satisfy the user's expectation.
 
-        IMPORTANT:
-        - DASHA and DOSHA are completely different concepts.
-        - A planet being in Mahadasha does NOT mean that planet has a Dosha.
-        - Never call "Saturn Mahadasha" a "Saturn Dosha".
-        - Never call "Jupiter Mahadasha" a "Guru Dosha".
-        - Doshas must ONLY come from the stored DOSHAS section.
+    IMPORTANT:
+    - DASHA and DOSHA are completely different concepts.
+    - A planet being in Mahadasha does NOT mean that planet has a Dosha.
+    - Never call "Saturn Mahadasha" a "Saturn Dosha".
+    - Never call "Jupiter Mahadasha" a "Guru Dosha".
+    - Doshas must ONLY come from the stored DOSHAS section.
 
-        ==================================================
-        D1 FOUNDATION
-        ==================================================
+    ==================================================
+    D1 FOUNDATION
+    ==================================================
 
-        - D1/Rasi chart is the foundation of the horoscope.
-        - Always inspect D1 before making an important prediction.
-        - Divisional charts refine a prediction but do not replace D1.
-        - Use the relevant divisional chart for the specific question.
-        - Cross-check the divisional chart against D1.
-        - Never make a major prediction solely from one isolated divisional-chart placement.
+    - D1/Rasi chart is the foundation of the horoscope.
+    - Always inspect D1 before making an important prediction.
+    - Divisional charts refine a prediction but do not replace D1.
+    - Use the relevant divisional chart for the specific question.
+    - Cross-check the divisional chart against D1.
+    - Never make a major prediction solely from one isolated divisional-chart placement.
 
-        ==================================================
-        ASTROLOGICAL CROSS-CHECK
-        ==================================================
+    ==================================================
+    ASTROLOGICAL CROSS-CHECK
+    ==================================================
 
-        For every meaningful prediction:
+    For every meaningful prediction:
 
-        1. Understand the user's actual question.
-        2. Identify the relevant astrology domain.
-        3. Inspect D1/Rasi first.
-        4. Analyse the relevant divisional chart.
-        5. Cross-check relevant:
-        - Houses
-        - Planets
-        - Yogas
-        - Doshas
-        - Planetary strength
-        - Shadbala
-        - Bhava Bala
-        - Chara Karakas
-        - Vimshottari Dasha
-        - Transit, when available
-        6. Only then provide the interpretation.
+    1. Understand the user's actual question.
+    2. Identify the relevant astrology domain.
+    3. Inspect D1/Rasi first.
+    4. Analyse the relevant divisional chart.
+    5. Cross-check relevant:
+    - Houses
+    - Planets
+    - Yogas
+    - Doshas
+    - Planetary strength
+    - Shadbala
+    - Bhava Bala
+    - Chara Karakas
+    - Vimshottari Dasha
+    - Transit, when available
+    6. Only then provide the interpretation.
 
-        Every important prediction must have identifiable astrological evidence.
+    Every important prediction must have identifiable astrological evidence.
 
-        ==================================================
-        CURRENT DATE / CURRENT TIME
-        ==================================================
+    ==================================================
+    CURRENT DATE / CURRENT TIME
+    ==================================================
 
-        - Distinguish natal birth data from the current date.
-        - Distinguish natal promise from currently active Dasha.
-        - Distinguish Dasha from Transit.
-        - Use the supplied CURRENT_VIMSHOTTARI_DASHA for current Dasha.
-        - Do not assume that the birth year/date is the current year/date.
+    - Distinguish natal birth data from the current date.
+    - Distinguish natal promise from currently active Dasha.
+    - Distinguish Dasha from Transit.
+    - Use the supplied CURRENT_VIMSHOTTARI_DASHA for current Dasha.
+    - Do not assume that the birth year/date is the current year/date.
 
-        ==================================================
-        REAL-WORLD CONTEXT
-        ==================================================
+    ==================================================
+    REAL-WORLD CONTEXT
+    ==================================================
 
-        - When the user's question genuinely depends on current world conditions such as:
-        - economy
-        - employment market
-        - technology
-        - travel
-        - international affairs
-        - current events
-        - financial environment
-        - current social conditions
+    - When the user's question genuinely depends on current world conditions such as:
+    - economy
+    - employment market
+    - technology
+    - travel
+    - international affairs
+    - current events
+    - financial environment
+    - current social conditions
 
-        use reliable current information if such information is actually available to the application.
+    use reliable current information if such information is actually available to the application.
 
-        - Never invent current news or current events.
-        - Current-world information is supporting context only.
-        - Astrology remains based on the stored horoscope.
-        - Clearly distinguish astrological interpretation from real-world/current factual context.
+    - Never invent current news or current events.
+    - Current-world information is supporting context only.
+    - Astrology remains based on the stored horoscope.
+    - Clearly distinguish astrological interpretation from real-world/current factual context.
 
-        ==================================================
-        CONSISTENCY AND CORRECTION
-        ==================================================
+    ==================================================
+    CONSISTENCY AND CORRECTION
+    ==================================================
 
-        - Do not unnecessarily apologize or become uncertain merely because the user challenges an answer.
-        - Re-check the supplied horoscope evidence before responding.
-        - If the stored chart supports the original conclusion, explain the astrological evidence confidently.
-        - If the stored chart genuinely contradicts the previous answer, correct the answer naturally and give the correct chart-based conclusion.
-        - Never invent evidence to defend a previous answer.
-        - Never change an astrologically supported conclusion merely to agree with the user.
+    - Do not unnecessarily apologize or become uncertain merely because the user challenges an answer.
+    - Re-check the supplied horoscope evidence before responding.
+    - If the stored chart supports the original conclusion, explain the astrological evidence confidently.
+    - If the stored chart genuinely contradicts the previous answer, correct the answer naturally and give the correct chart-based conclusion.
+    - Never invent evidence to defend a previous answer.
+    - Never change an astrologically supported conclusion merely to agree with the user.
 
-        ==================================================
-        LIMITED DATA
-        ==================================================
+    ==================================================
+    LIMITED DATA
+    ==================================================
 
-        - If stored horoscope data exists, analyse the available data.
-        - Do not unnecessarily say "I don't have enough data."
-        - Do not say the chart is impossible to analyse when relevant stored chart data exists.
-        - Use the available D1, divisional charts, yogas, doshas, strengths, dashas and other supplied data.
+    - If stored horoscope data exists, analyse the available data.
+    - Do not unnecessarily say "I don't have enough data."
+    - Do not say the chart is impossible to analyse when relevant stored chart data exists.
+    - Use the available D1, divisional charts, yogas, doshas, strengths, dashas and other supplied data.
 
-        ==================================================
-        PREDICTION STYLE
-        ==================================================
+    ==================================================
+    PREDICTION STYLE
+    ==================================================
 
-        - Do not give generic horoscope statements.
-        - Explain WHY a prediction is being made.
-        - Mention the relevant planet, house, chart, Dasha or Yoga.
-        - Keep the explanation understandable to the user.
-        - If timing is discussed, connect it to Dasha/Antardasha/Pratyantardasha and relevant transit when available.
+    - Do not give generic horoscope statements.
+    - Explain WHY a prediction is being made.
+    - Mention the relevant planet, house, chart, Dasha or Yoga.
+    - Keep the explanation understandable to the user.
+    - If timing is discussed, connect it to Dasha/Antardasha/Pratyantardasha and relevant transit when available.
 
-        ==================================================
-        REMEDIES
-        ==================================================
+    ==================================================
+    REMEDIES
+    ==================================================
 
-        - Recommend remedies only when astrologically relevant.
-        - Do not present remedies as guaranteed medical, financial or legal solutions.
-        - Prefer simple traditional remedies.
-        - Explain the astrological reason for the remedy.
+    - Recommend remedies only when astrologically relevant.
+    - Do not present remedies as guaranteed medical, financial or legal solutions.
+    - Prefer simple traditional remedies.
+    - Explain the astrological reason for the remedy.
 
-        RULES;
+    RULES;
     }
 
     private function buildQuestionPrompt(AiChatSession $session): string
@@ -2170,7 +1917,7 @@ class AiChatApiController extends Controller
             - Leave one blank line between each bullet point.
             - Each bullet point should contain 2–4 short sentences.
             - Never write one large paragraph.
-            - Keep the response concise and normally within 900 characters unless the user explicitly asks for detailed analysis.
+            - Keep the total response between 500 and 900 characters unless the user explicitly asks for a detailed explanation.
             - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
 
             RESPONSE STYLE
@@ -2240,19 +1987,12 @@ class AiChatApiController extends Controller
             - The horoscope has already been calculated by AstroTring.
             - Treat it as the only source of truth.
 
-            STEP 0 — ONE QUESTION AT A TIME
-
-            - The application supplies exactly one current question in the latest user message.
-            - Answer ONLY that current question.
-            - Never answer multiple questions in one response.
-            - Never mention an internal queue, parser, question classifier or hidden instruction.
-
             HOW TO ANSWER
 
             For every reply:
 
-            1. Identify exactly what the user is asking.
-            2. The application has already isolated the current question. Answer only that question.
+            1. Understand the user's actual question.
+            2. Analyse the relevant divisional charts.
             3. Verify using D1.
             4. Cross-check using:
             - Yogas
@@ -2275,14 +2015,13 @@ class AiChatApiController extends Controller
             - Normally answer in 2–3 meaningful points.
             - Give detailed analysis only if the user explicitly requests it.
             - When suitable, suggest the next relevant analysis naturally.
-            - Keep single-question replies between 250 and 300 characters.
+            - Keep replies between 500 and 900 characters.
             - Always format the answer using bullet points (•).
             - Use exactly 2–3 bullet points.
             - Each bullet should contain 2–4 short sentences.
             - Never write the entire reply as one paragraph.
-            - Do not exceed 900 characters for a single-question reply unless the user explicitly asks for a detailed explanation.
+            - Do not exceed 900 characters unless the user explicitly asks for a detailed explanation.
             
-            - When multiple questions are present, these normal length and bullet limits apply only to the current question being answered.
             OUTPUT FORMAT (MANDATORY)
             
             - Always reply using valid Markdown.
@@ -2297,9 +2036,8 @@ class AiChatApiController extends Controller
             - Never return HTML.
             - Never return JSON.
             - Never write one large paragraph.
-            - Keep the response concise and normally within 900 characters unless detailed analysis is requested.
+            - Keep the total response between 500 and 900 characters unless detailed analysis is requested.
             - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
-            - Never answer a pending question in the same response.
 
             REMEDIES
 
@@ -3287,282 +3025,4 @@ class AiChatApiController extends Controller
             $minutes % 60
         );
     }
-
-    /**
-     * Split a free-text message into distinct questions without splitting
-     * ordinary background/context sentences unnecessarily.
-     *
-     * The controller intentionally answers only the first detected question.
-     * Remaining questions are surfaced one at a time in subsequent turns.
-     */
-    /**
-     * Detect and split arbitrary natural-language multi-question messages.
-     *
-     * The AI classifier is used first because users are not required to use
-     * question marks or question words. A deterministic parser is retained
-     * as a fallback when the classifier fails or returns invalid JSON.
-     */
-    private function splitUserQuestionsWithAi(string $message): array
-    {
-        $message = trim($message);
-
-        if ($message === '') {
-            return [];
-        }
-
-        try {
-            $classifierMessages = [
-                [
-                    'role' => 'system',
-                    'content' => <<<'PROMPT'
-                    You are a question-segmentation engine for an astrology chat application.
-
-                    Your ONLY job is to split the user's message into separate answerable questions/topics.
-                    Return ONLY valid JSON in this exact shape:
-                    {"questions":["question 1","question 2"]}
-
-                    Rules:
-                    - Preserve the user's original language and meaning.
-                    - Do NOT answer the questions.
-                    - Do NOT rewrite them into different questions unless needed to make a fragment grammatically complete.
-                    - A single user message may contain any number of questions.
-                    - Questions do NOT need a question mark.
-                    - Questions may be separated by "aur", "or", "and", commas, semicolons, line breaks, numbering, or simply by changing topic.
-                    - Mixed Hindi/English and Hinglish are valid.
-                    - A short fragment can be a separate question if it clearly asks for another answerable detail.
-                    - Treat each distinct requested detail as a separate question. For example, marriage timing, wife appearance, career growth, fiance job, salary, government/private job are separate questions even when they appear in one sentence.
-                    - A phrase like "government job hogi ya private" is ONE question with two alternatives, not two questions.
-                    - Keep background/context attached to the question it explains.
-                    - Do NOT split one question into fragments such as "kab" and "shaadi hogi" when they are one intent.
-                    - Do NOT merge separate details just because they are about the same person/topic.
-                    - Do NOT split normal descriptive context into fake questions.
-                    - If there are N distinct answerable intents, return N items in the original order.
-                    - If there is only one answerable intent, return exactly one item.
-                    - Return at most 20 items. If there are more, preserve the first 20 in order.
-
-                    Examples:
-                    1) "Meri shadi hogi? Or hogi to kab tak hogi? Duto my baldness har ladki mujhe reject kar to hai"
-                    => {"questions":["Meri shadi hogi?","hogi to kab tak hogi?","Duto my baldness har ladki mujhe reject kar to hai"]}
-
-                    2) "Meri shadi Kase hogi Love marriage hogi ya arrenge marriage ladaki kase hogi job karegi ya nahi government ya pravet kis field mein job karegi wife dikhne main kase hogi uska family bagraound uska face look"
-                    => split into the separate marriage/marriage-type/wife/job/appearance/family questions in the same order.
-
-                    3) "Meri shaadi kab hogi aur kya career stable rahega?"
-                    => {"questions":["Meri shaadi kab hogi","kya career stable rahega?"]}
-                    PROMPT
-                ],
-                [
-                    'role' => 'user',
-                    'content' => $message,
-                ],
-            ];
-
-            $raw = $this->openAiService->chat($classifierMessages);
-            $decoded = $this->decodeQuestionClassifierResponse($raw);
-
-            if (!empty($decoded)) {
-                return $decoded;
-            }
-        } catch (Throwable $e) {
-            Log::warning('AI_QUESTION_CLASSIFIER_FAILED', [
-                'message' => $e->getMessage(),
-            ]);
-        }
-
-        return $this->splitUserQuestionsHeuristic($message);
-    }
-
-    /**
-     * Parse the classifier response safely. The model is not trusted to return
-     * perfect JSON, so code fences and surrounding text are stripped first.
-     */
-    private function decodeQuestionClassifierResponse(string $response): array
-    {
-        $response = trim($response);
-
-        if ($response === '') {
-            return [];
-        }
-
-        $response = preg_replace('/^```(?:json)?\s*/iu', '', $response);
-        $response = preg_replace('/\s*```$/u', '', $response);
-        $response = trim($response);
-
-        $decoded = json_decode($response, true);
-
-        if (!is_array($decoded) || !isset($decoded['questions']) || !is_array($decoded['questions'])) {
-            $start = strpos($response, '{');
-            $end = strrpos($response, '}');
-
-            if ($start !== false && $end !== false && $end > $start) {
-                $decoded = json_decode(substr($response, $start, $end - $start + 1), true);
-            }
-        }
-
-        if (!is_array($decoded) || !isset($decoded['questions']) || !is_array($decoded['questions'])) {
-            return [];
-        }
-
-        $questions = [];
-
-        foreach ($decoded['questions'] as $question) {
-            if (!is_string($question)) {
-                continue;
-            }
-
-            $question = trim(preg_replace('/\s+/u', ' ', $question));
-
-            if ($question !== '') {
-                $questions[] = $question;
-            }
-
-            if (count($questions) >= 20) {
-                break;
-            }
-        }
-
-        return array_values(array_unique($questions));
-    }
-
-    /**
-     * Fallback parser for cases where the classifier API is unavailable.
-     * This is intentionally conservative so normal context is not fragmented.
-     */
-    private function splitUserQuestionsHeuristic(string $message): array
-    {
-        $message = trim(preg_replace('/\s+/u', ' ', $message));
-
-        if ($message === '') {
-            return [];
-        }
-
-        $questionWords = [
-            'kya', 'kyu', 'kyon', 'kaise', 'kab', 'kahan', 'kaha',
-            'kaunsa', 'konsa', 'kaunsi', 'konsi', 'kis', 'kisme',
-            'kisko', 'kitna', 'kitni', 'kitne', 'kiski', 'kisliye',
-            'when', 'where', 'why', 'how', 'which', 'what', 'who',
-            'will', 'should', 'can', 'could', 'would',
-        ];
-
-        $questionMarkCount = preg_match_all('/[?？]/u', $message);
-
-        $parts = preg_split('/[?？]+\s*/u', $message, -1, PREG_SPLIT_NO_EMPTY);
-        $parts = $this->cleanQuestionParts($parts);
-
-        if ($questionMarkCount > 1) {
-            return $parts;
-        }
-
-        if (count($parts) > 1 && $this->containsQuestionWord($parts[1], $questionWords)) {
-            return $parts;
-        }
-
-        $parts = preg_split('/\s+(?:aur|or|and|plus|also)\s+/iu', $message, -1, PREG_SPLIT_NO_EMPTY);
-        $parts = $this->cleanQuestionParts($parts);
-
-        if (count($parts) > 1) {
-            $questionLikeParts = 0;
-
-            foreach ($parts as $part) {
-                if ($this->containsQuestionWord($part, $questionWords)) {
-                    $questionLikeParts++;
-                }
-            }
-
-            if ($questionLikeParts >= 2) {
-                return $parts;
-            }
-        }
-
-        $parts = preg_split('/\s*[,;]\s*/u', $message, -1, PREG_SPLIT_NO_EMPTY);
-        $parts = $this->cleanQuestionParts($parts);
-
-        if (count($parts) > 1) {
-            $questionLikeParts = 0;
-
-            foreach ($parts as $part) {
-                if ($this->containsQuestionWord($part, $questionWords)) {
-                    $questionLikeParts++;
-                }
-            }
-
-            if ($questionLikeParts >= 2) {
-                return $parts;
-            }
-        }
-
-        return [$message];
-    }
-
-    private function isContinuationMessage(?string $message): bool
-    {
-        $message = trim((string) $message);
-        $message = preg_replace('/[.!?,]+$/u', '', $message);
-        $message = preg_replace('/\s+/u', ' ', $message);
-
-        return (bool) preg_match(
-            '/^(haan|ha|han|yes|yup|yep|ok|okay|batao|haan batao|ha batao|yes tell me|tell me|continue|next|aage batao|aage|bilkul)$/iu',
-            $message
-        );
-    }
-
-    private function getPendingQuestions(AiChatSession $session): array
-    {
-        $pending = $session->pending_questions ?? [];
-
-        if (is_string($pending)) {
-            $pending = json_decode($pending, true) ?? [];
-        }
-
-        if (!is_array($pending)) {
-            return [];
-        }
-
-        return array_values(array_filter(array_map(
-            static fn ($question) => is_string($question) ? trim($question) : '',
-            $pending
-        )));
-    }
-
-    private function containsQuestionWord(string $text, array $questionWords): bool
-    {
-        foreach ($questionWords as $word) {
-            if (preg_match(
-                '/(?:^|\s)' . preg_quote($word, '/') . '(?:\s|$)/iu',
-                $text
-            )) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function cleanQuestionParts(array $parts): array
-    {
-        $cleaned = [];
-
-        foreach ($parts as $part) {
-            $part = trim((string) $part);
-
-            if ($part === '') {
-                continue;
-            }
-
-            $part = preg_replace(
-                '/^(?:aur|or|and|plus|also)\s+/iu',
-                '',
-                $part
-            );
-
-            $part = trim($part, " \t\n\r\0\x0B,;.-");
-
-            if ($part !== '') {
-                $cleaned[] = $part;
-            }
-        }
-
-        return array_values($cleaned);
-    }
-
 }
