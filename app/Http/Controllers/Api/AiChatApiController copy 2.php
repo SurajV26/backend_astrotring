@@ -23,7 +23,7 @@ use Throwable;
 class AiChatApiController extends Controller
 {
     private const FREE_MESSAGES_ALLOWED = 1;
-    private const MINIMUM_CHAT_START_BALANCE = 80.00;
+    private const MINIMUM_CHAT_START_BALANCE = 50.00;
     private const CHAT_IDLE_TIMEOUT_SECONDS = 180;
 
     private OpenAiService $openAiService;
@@ -209,7 +209,7 @@ class AiChatApiController extends Controller
 
             $title = $session->astrologer->gender === 'female' ? 'Ms.' : 'Mr.';
 
-            $reply = "Hello {$user->name}! I am {$title} {$session->astrologer->name}, your Vedic astrologer. Please select one of the questions below or type your own question to begin. For a focused reading, please ask one question at a time.";
+            $reply = "Hello {$user->name}! I am {$title} {$session->astrologer->name}, your Vedic astrologer. Please select a question below or type your own question to begin. If you send multiple questions together, I will answer them one by one in order.";
 
             AiChatMessage::create([
                 'session_id' => $session->id,
@@ -242,6 +242,21 @@ class AiChatApiController extends Controller
 
         if (!$request->filled('question_id') && !$request->filled('message')) {
             return $this->errorResponse('Question is required.', 422);
+        }
+
+        $isDatabaseQuestion = $request->filled('question_id');
+        $isContinuation = !$isDatabaseQuestion
+            && $this->isContinuationMessage($request->message);
+
+        // Question segmentation is an external AI call. Perform it BEFORE
+        // opening the database transaction so user/session row locks are not
+        // held while waiting for OpenAI.
+        $preSplitQuestions = null;
+
+        if (!$isDatabaseQuestion && !$isContinuation) {
+            $preSplitQuestions = $this->splitUserQuestionsWithAi(
+                trim((string) $request->message)
+            );
         }
 
         DB::beginTransaction();
@@ -313,8 +328,6 @@ class AiChatApiController extends Controller
                 }
             }
 
-            $isDatabaseQuestion = $request->filled('question_id');
-
             [$currentQuestion, $questionId, $failure] = $isDatabaseQuestion
                 ? $this->resolveDatabaseQuestion($session, (int) $request->question_id)
                 : $this->resolveFreeTextQuestion($request->message);
@@ -327,17 +340,78 @@ class AiChatApiController extends Controller
 
             /*
              |--------------------------------------------------------------------------
-             | MULTIPLE QUESTION HANDLING
+             | MULTIPLE QUESTION QUEUE + ORIGINAL USER HISTORY
              |--------------------------------------------------------------------------
-             | Never reject a message just because it contains multiple questions.
-             | Answer the first question now and keep the next questions for later turns.
-             | The next question is explicitly mentioned in the assistant response so
-             | a simple "haan / batao" can continue the pending topic naturally.
+             | IMPORTANT: The user's real message and the AI's current question are
+             | two different things.
+             |
+             | Example:
+             |   User types: "Q1 Q2 Q3 Q4 Q5"
+             |
+             | History must store the REAL user text.
+             | AI receives only Q1.
+             | Queue stores Q2-Q5.
+             |
+             | When user types "haan":
+             |   History stores "haan".
+             |   AI answers Q2.
+             |   ONLY Q2 is removed from the queue.
+             |   Q3-Q5 remain untouched.
+             |
+             | If the user sends a new direct question while a queue already exists,
+             | the old pending questions are NEVER deleted. New pending questions are
+             | appended after the existing queue.
              */
-            $questionParts = $this->splitUserQuestions($currentQuestion);
+            $originalUserMessage = trim((string) ($request->message ?? ''));
+            $existingPendingQuestions = $this->getPendingQuestions($session);
 
-            $currentQuestion = $questionParts[0] ?? $currentQuestion;
-            $pendingQuestions = array_slice($questionParts, 1);
+            if ($isDatabaseQuestion) {
+                // A predefined/table question must never wipe an existing queue.
+                $pendingQuestions = $existingPendingQuestions;
+
+            } elseif ($isContinuation) {
+                if (!empty($existingPendingQuestions)) {
+                    // Peek/pop exactly ONE pending question for this turn.
+                    $currentQuestion = $existingPendingQuestions[0];
+                    $pendingQuestions = array_values(
+                        array_slice($existingPendingQuestions, 1)
+                    );
+                } else {
+                    // No pending question exists. Keep the user's real text and
+                    // let normal conversation handling answer it.
+                    $pendingQuestions = [];
+                }
+
+            } else {
+                $questionParts = is_array($preSplitQuestions) && !empty($preSplitQuestions)
+                    ? $preSplitQuestions
+                    : [$currentQuestion];
+
+                $currentQuestion = trim((string) ($questionParts[0] ?? $currentQuestion));
+                $newPendingQuestions = array_values(array_filter(
+                    array_map(
+                        static fn ($question) => trim((string) $question),
+                        array_slice($questionParts, 1)
+                    ),
+                    static fn ($question) => $question !== ''
+                ));
+
+                // NEVER replace the old queue. Keep all unanswered questions.
+                $pendingQuestions = array_values(array_merge(
+                    $existingPendingQuestions,
+                    $newPendingQuestions
+                ));
+            }
+
+            /*
+             * Queue state represents ONLY unanswered questions. The question that
+             * is currently being answered has already been removed above in the
+             * continuation case. If the AI call fails, the transaction rolls back
+             * and the removed question returns automatically.
+             */
+            $session->update([
+                'pending_questions' => array_values($pendingQuestions),
+            ]);
 
             $freeLimit = $this->getFreeMessageLimit();
 
@@ -357,7 +431,12 @@ class AiChatApiController extends Controller
                 'session_id' => $session->id,
                 'question_id' => $questionId,
                 'sender' => 'user',
-                'message' => $currentQuestion,
+                // HISTORY: Always save exactly what the user typed.
+                // For question_id based messages, message is not supplied, so
+                // fall back to the resolved question text.
+                'message' => $originalUserMessage !== ''
+                    ? $originalUserMessage
+                    : $currentQuestion,
                 'charged_amount' => 0,
                 'is_free' => $isFree,
                 'model' => 'gpt-4.1-mini',
@@ -371,8 +450,7 @@ class AiChatApiController extends Controller
                 $systemPrompt,
                 $session,
                 $currentQuestion,
-                $isDatabaseQuestion,
-                $pendingQuestions
+                $isDatabaseQuestion
             );
 
             Log::info('AI_CHAT_REQUEST_PAYLOAD', [
@@ -1283,7 +1361,7 @@ class AiChatApiController extends Controller
                 return response()->json([
                     'status' => false,
                     'type' => 'insufficient_balance',
-                    'message' => 'Minimum ₹80 wallet balance is required to start chat. Please recharge your wallet to continue.',
+                    'message' => 'Minimum ₹50 wallet balance is required to start chat. Please recharge your wallet to continue.',
                     'required_balance' => $minimumStartBalance,
                     'wallet_balance' => $walletBalance,
                     'price_per_minute' => $pricePerMinute,
@@ -1329,7 +1407,7 @@ class AiChatApiController extends Controller
                 return response()->json([
                     'status' => false,
                     'type' => 'insufficient_balance',
-                    'message' => 'Minimum ₹80 wallet balance is required to start chat, and the wallet must also cover the first paid minute.',
+                    'message' => 'Minimum ₹50 wallet balance is required to start chat, and the wallet must also cover the first paid minute.',
                             'required_balance' => $requiredStartBalance,
                     'wallet_balance' => $walletBalance,
                     'available_paid_minutes' => $availablePaidMinutes,
@@ -1564,8 +1642,7 @@ class AiChatApiController extends Controller
         string $systemPrompt,
         AiChatSession $session,
         string $currentQuestion,
-        bool $isDatabaseQuestion,
-        array $pendingQuestions = []
+        bool $isDatabaseQuestion
     ): array {
         $messages = [
             ['role' => 'system', 'content' => $systemPrompt],
@@ -1575,8 +1652,7 @@ class AiChatApiController extends Controller
             $messages[] = [
                 'role' => 'user',
                 'content' => $this->buildCurrentQuestionInstruction(
-                    $currentQuestion,
-                    $pendingQuestions
+                    $currentQuestion
                 ),
             ];
 
@@ -1608,8 +1684,7 @@ class AiChatApiController extends Controller
         $messages[] = [
             'role' => 'user',
             'content' => $this->buildCurrentQuestionInstruction(
-                $currentQuestion,
-                $pendingQuestions
+                $currentQuestion
             ),
         ];
 
@@ -1619,41 +1694,109 @@ class AiChatApiController extends Controller
     /**
      * Build the final instruction sent with the current user question.
      */
-    private function buildCurrentQuestionInstruction(
-        string $currentQuestion,
-        array $pendingQuestions = []
-    ): string {
+    private function buildCurrentQuestionInstruction(string $currentQuestion): string
+    {
+        $currentQuestion = trim($currentQuestion);
+        $language = $this->detectUserLanguage($currentQuestion);
+
         $instruction = $currentQuestion . "\n\nIMPORTANT INSTRUCTIONS:\n";
 
-        $instruction .= '- Answer ONLY the question written above.' . "\n";
-        $instruction .= '- Do NOT answer, predict, hint at, or partially answer another question.' . "\n";
-        $instruction .= '- Keep the answer focused on the current question only.' . "\n";
+        $instruction .= '- Answer ONLY the single question in the latest user message.' . "\n";
+        $instruction .= '- Do NOT answer any other question from earlier or later turns.' . "\n";
+        $instruction .= '- Do NOT combine multiple topics into one answer.' . "\n";
+        $instruction .= '- If the question contains background/context, use it only to understand the current question.' . "\n";
+        $instruction .= '- The application controls the question queue. Never create, reveal or discuss an internal queue.' . "\n";
 
-        if (!empty($pendingQuestions)) {
-            $nextQuestion = trim((string) $pendingQuestions[0]);
+        /*
+         * LANGUAGE RULE — STRICT
+         *
+         * The response language must follow the user's current question.
+         * Do not automatically switch to English.
+         */
+        $instruction .= "\nLANGUAGE RULE — STRICT:\n";
 
-            $instruction .= "\nPENDING NEXT QUESTION (DO NOT ANSWER NOW):\n";
-            $instruction .= '"' . $nextQuestion . '"' . "\n";
-            $instruction .= '- Do not add your own follow-up sentence about the pending question; the application will append the continuation line automatically.' . "\n";
-            $instruction .= '- Do not give any answer, prediction, hint, or conclusion about the pending question.' . "\n";
-        } elseif (preg_match('/^(haan|ha|yes|yup|batao|haan batao|yes tell me|tell me|okay|ok)$/iu', trim($currentQuestion))) {
-            $instruction .= "\nCONTINUATION RULE:\n";
-            $instruction .= '- The user may be confirming a pending question from the previous assistant message.' . "\n";
-            $instruction .= '- If the previous assistant message explicitly named a pending question and the current message is only a confirmation, answer ONLY that pending question.' . "\n";
-            $instruction .= '- Do not invent a pending question if none was explicitly identified in the conversation.' . "\n";
+        if ($language === 'english') {
+            $instruction .= '- The user is speaking English. Reply ONLY in natural English.' . "\n";
+            $instruction .= '- Do not translate the answer into Hindi or Hinglish.' . "\n";
+            $instruction .= '- Any follow-up sentence must also be in English.' . "\n";
+        } elseif ($language === 'hindi') {
+            $instruction .= '- The user is speaking Hindi. Reply ONLY in natural Hindi.' . "\n";
+            $instruction .= '- Do not switch to English or Hinglish.' . "\n";
+            $instruction .= '- Any follow-up sentence must also be in Hindi.' . "\n";
+        } else {
+            $instruction .= '- The user is speaking Hinglish / Roman Hindi. Reply in the same natural Hinglish style.' . "\n";
+            $instruction .= '- Keep the same Hindi-English mix used by the user.' . "\n";
+            $instruction .= '- Do not convert the response fully into English or formal Hindi.' . "\n";
+            $instruction .= '- Any follow-up sentence must use the same Hinglish style.' . "\n";
         }
 
         $instruction .= "\nReply using valid Markdown.\n";
         $instruction .= '- Use exactly 2–3 bullet points.' . "\n";
         $instruction .= '- Highlight important astrology terms using **bold**.' . "\n";
-        $instruction .= '- Keep the total reply between 250 and 300 characters unless the user explicitly asks for detailed analysis.';
+        $instruction .= '- Keep the response concise unless the user explicitly asks for detailed analysis.';
 
         return $instruction;
     }
 
     /**
-     * Add a short, explicit continuation prompt when the original message
-     * contained more than one question.
+     * Detect the language/style of the current question.
+     *
+     * english = English
+     * hindi   = Devanagari Hindi
+     * hinglish = Roman Hindi / mixed Hindi-English
+     */
+    private function detectUserLanguage(string $text): string
+    {
+        $text = trim($text);
+
+        if ($text === '') {
+            return 'english';
+        }
+
+        // Devanagari text => Hindi.
+        if (preg_match('/[\x{0900}-\x{097F}]/u', $text)) {
+            return 'hindi';
+        }
+
+        $normalized = mb_strtolower($text, 'UTF-8');
+        $normalized = preg_replace('/[^a-z0-9\s]/u', ' ', $normalized);
+        $words = preg_split('/\s+/u', trim($normalized), -1, PREG_SPLIT_NO_EMPTY);
+
+        /*
+         * Common Roman-Hindi markers.
+         * Any meaningful hit means the user is using Roman Hindi/Hinglish,
+         * which is the style used throughout the chat UI.
+         */
+        $romanHindiWords = [
+            'main', 'mai', 'mein', 'mujhe', 'mujh', 'mera', 'meri', 'mere',
+            'hum', 'ham', 'aap', 'ap', 'tum', 'tera', 'teri', 'tere',
+            'hai', 'hain', 'tha', 'thi', 'the', 'hoga', 'hogi', 'hoge',
+            'kab', 'kaha', 'kahan', 'kaise', 'kaisi', 'kaisa', 'kya',
+            'kyu', 'kyun', 'kyon', 'kis', 'kise', 'kisko', 'kiski',
+            'kitna', 'kitni', 'kitne', 'aur', 'ya', 'lekin', 'par',
+            'se', 'ko', 'ka', 'ke', 'ki', 'me', 'par', 'liye', 'liye',
+            'batao', 'bataiye', 'bolo', 'boliye', 'chahiye', 'chaiye',
+            'chahta', 'chahti', 'jana', 'jaana', 'janna', 'jaanna',
+            'hoga', 'hogi', 'karega', 'karegi', 'karunga', 'karungi',
+            'raha', 'rahi', 'rahe', 'sakta', 'sakti', 'sakte',
+            'nahi', 'nahin', 'haan', 'ha', 'han', 'ab', 'phir', 'fir',
+            'wala', 'wali', 'wale', 'mera', 'meri', 'mere',
+            'shaadi', 'shadi', 'pyaar', 'pyar', 'rishta', 'ladki', 'ladka',
+            'wife', 'husband', 'future', 'job', 'salary'
+        ];
+
+        foreach ($words as $word) {
+            if (in_array($word, $romanHindiWords, true)) {
+                return 'hinglish';
+            }
+        }
+
+        return 'english';
+    }
+
+    /**
+     * Add a short continuation prompt in the SAME language/style as the
+     * upcoming question. Never mix an English answer with a Hindi follow-up.
      */
     private function appendPendingQuestionFollowUp(string $reply, string $nextQuestion): string
     {
@@ -1663,7 +1806,15 @@ class AiChatApiController extends Controller
             return $reply;
         }
 
-        $followUp = "\n\nAgar aap \"{$nextQuestion}\" ke baare mein bhi jaana chahte hain, to bataiye.";
+        $language = $this->detectUserLanguage($nextQuestion);
+
+        if ($language === 'english') {
+            $followUp = "\n\nIf you would like to know about \"{$nextQuestion}\" too, just say \"yes\" or \"tell me\".";
+        } elseif ($language === 'hindi') {
+            $followUp = "\n\nAgar aap \"{$nextQuestion}\" ke baare mein bhi jaana chahte hain, to \"haan\" ya \"bataiye\" likhiye.";
+        } else {
+            $followUp = "\n\nAgar aap \"{$nextQuestion}\" ke baare mein bhi jaana chahte hain, to \"haan\" ya \"batao\" likhiye.";
+        }
 
         return trim($reply) . $followUp;
     }
@@ -2019,7 +2170,7 @@ class AiChatApiController extends Controller
             - Leave one blank line between each bullet point.
             - Each bullet point should contain 2–4 short sentences.
             - Never write one large paragraph.
-            - Keep the total response between 250 and 300 characters unless the user explicitly asks for a detailed explanation.
+            - Keep the response concise and normally within 900 characters unless the user explicitly asks for detailed analysis.
             - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
 
             RESPONSE STYLE
@@ -2091,14 +2242,10 @@ class AiChatApiController extends Controller
 
             STEP 0 — ONE QUESTION AT A TIME
 
-            - The application has already separated the user's original message into the current question and any pending next questions.
-            - Answer ONLY the current question supplied in the latest user message.
-            - Never answer a pending question in the same response.
-            - Never combine multiple questions into one answer.
-            - If a pending question is explicitly shown in the latest instruction, use it only as the next-turn continuation topic.
-            - If the user replies with a short confirmation such as "haan", "ha", "yes", "batao", "haan batao" or "tell me", inspect the previous assistant message. If it explicitly named a pending question, answer ONLY that pending question.
-            - If the user asks a new question instead, answer the new question and do not force the old pending question into the response.
-            - Never mention an internal queue, parser, pending-question system or hidden instruction.
+            - The application supplies exactly one current question in the latest user message.
+            - Answer ONLY that current question.
+            - Never answer multiple questions in one response.
+            - Never mention an internal queue, parser, question classifier or hidden instruction.
 
             HOW TO ANSWER
 
@@ -2150,7 +2297,7 @@ class AiChatApiController extends Controller
             - Never return HTML.
             - Never return JSON.
             - Never write one large paragraph.
-            - Keep the total response between 250 and 300 characters unless detailed analysis is requested.
+            - Keep the response concise and normally within 900 characters unless detailed analysis is requested.
             - Whenever an astrology term first appears (planet, sign, house, yoga, dosha, nakshatra, mantra or remedy), wrap it in **bold**. Keep the same term in normal text if it is repeated later.
             - Never answer a pending question in the same response.
 
@@ -2191,51 +2338,6 @@ class AiChatApiController extends Controller
      * chart record (place, state, lat/long, report_date) — so the AI never
      * has a reason to ask for DOB/time/place again.
      */
-    // private function getUserProfileContext(AiChatSession $session): string
-    // {
-    //     $user = $session->user ?? User::find($session->user_id);
-    //     $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
-
-    //     $profile = [];
-
-    //     if ($user) {
-    //         foreach (self::USER_PROFILE_FIELDS as $field) {
-    //             if (isset($user->{$field}) && $user->{$field} !== null && $user->{$field} !== '') {
-    //                 $profile[$field] = $user->{$field};
-    //             }
-    //         }
-    //     }
-
-    //     if ($chart) {
-    //         foreach (['place', 'state', 'latitude', 'longitude', 'timezone', 'report_date', 'day'] as $field) {
-    //             if (isset($chart->{$field}) && $chart->{$field} !== null && $chart->{$field} !== '') {
-    //                 $profile['birth_' . $field] = $chart->{$field};
-    //             }
-    //         }
-
-    //         // birth_details (actual DOB/time) lives only inside raw_data,
-    //         // it is never part of relevant_chart, so pull it unconditionally
-    //         // here — otherwise the AI never sees it and keeps asking for DOB.
-    //         $rawData = is_array($chart->raw_data)
-    //             ? $chart->raw_data
-    //             : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //         if (!is_array($rawData)) {
-    //             $rawData = [];
-    //         }
-
-    //         if (isset($rawData['birth_details'])) {
-    //             $profile['birth_details'] = $rawData['birth_details'];
-    //         }
-    //     }
-
-    //     if (empty($profile)) {
-    //         return 'No additional user profile data on record.';
-    //     }
-
-    //     return json_encode($profile, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    // }
-
     private function getUserProfileContext(AiChatSession $session): string
     {
         $user = User::find($session->user_id);
@@ -2375,92 +2477,6 @@ class AiChatApiController extends Controller
             JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
         );
     }
-
-    // private function getCurrentDashaContext(AiChatSession $session): string
-    // {
-    //     $chart = UserAstrologyChart::where('user_id', $session->user_id)->first();
-
-    //     if (!$chart) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $rawData = is_array($chart->raw_data)
-    //         ? $chart->raw_data
-    //         : (json_decode((string) $chart->raw_data, true) ?? []);
-
-    //     if (!is_array($rawData)) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $dashaRows = data_get(
-    //         $rawData,
-    //         'horoscope.graha_dashas.vimsottari',
-    //         []
-    //     );
-
-    //     if (!is_array($dashaRows) || empty($dashaRows)) {
-    //         return 'No Vimshottari Dasha data available.';
-    //     }
-
-    //     $now = now();
-
-    //     $current = null;
-    //     $next = null;
-
-    //     foreach ($dashaRows as $row) {
-    //         if (!is_array($row) || count($row) < 2) {
-    //             continue;
-    //         }
-
-    //         $name = trim((string) $row[0]);
-    //         $start = trim((string) $row[1]);
-
-    //         try {
-    //             $startAt = Carbon::parse($start);
-    //         } catch (\Throwable $e) {
-    //             continue;
-    //         }
-
-    //         if ($startAt->lessThanOrEqualTo($now)) {
-    //             $current = [
-    //                 'name' => $name,
-    //                 'start' => $startAt->toDateTimeString(),
-    //             ];
-
-    //             continue;
-    //         }
-
-    //         $next = [
-    //             'name' => $name,
-    //             'start' => $startAt->toDateTimeString(),
-    //         ];
-
-    //         break;
-    //     }
-
-    //     if (!$current) {
-    //         return 'No current Vimshottari Dasha could be determined.';
-    //     }
-
-    //     $parts = array_map(
-    //         'trim',
-    //         explode('-', $current['name'])
-    //     );
-
-    //     return json_encode([
-    //         'calculation_system' => 'Vimshottari',
-    //         'checked_at' => $now->toDateTimeString(),
-    //         'current' => [
-    //             'mahadasha' => $parts[0] ?? null,
-    //             'antardasha' => $parts[1] ?? null,
-    //             'pratyantardasha' => $parts[2] ?? null,
-    //             'full_period' => $current['name'],
-    //             'started_at' => $current['start'],
-    //             'ends_at' => $next['start'] ?? null,
-    //         ],
-    //         'next_period' => $next,
-    //     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-    // }
 
     /**
      * Get current Vimshottari Dasha from stored JHora data.
@@ -3148,7 +3164,140 @@ class AiChatApiController extends Controller
      * The controller intentionally answers only the first detected question.
      * Remaining questions are surfaced one at a time in subsequent turns.
      */
-    private function splitUserQuestions(string $message): array
+    /**
+     * Detect and split arbitrary natural-language multi-question messages.
+     *
+     * The AI classifier is used first because users are not required to use
+     * question marks or question words. A deterministic parser is retained
+     * as a fallback when the classifier fails or returns invalid JSON.
+     */
+    private function splitUserQuestionsWithAi(string $message): array
+    {
+        $message = trim($message);
+
+        if ($message === '') {
+            return [];
+        }
+
+        try {
+            $classifierMessages = [
+                [
+                    'role' => 'system',
+                    'content' => <<<'PROMPT'
+                    You are a question-segmentation engine for an astrology chat application.
+
+                    Your ONLY job is to split the user's message into separate answerable questions/topics.
+                    Return ONLY valid JSON in this exact shape:
+                    {"questions":["question 1","question 2"]}
+
+                    Rules:
+                    - Preserve the user's original language and meaning.
+                    - Do NOT answer the questions.
+                    - Do NOT rewrite them into different questions unless needed to make a fragment grammatically complete.
+                    - A single user message may contain any number of questions.
+                    - Questions do NOT need a question mark.
+                    - Questions may be separated by "aur", "or", "and", commas, semicolons, line breaks, numbering, or simply by changing topic.
+                    - Mixed Hindi/English and Hinglish are valid.
+                    - A short fragment can be a separate question if it clearly asks for another answerable detail.
+                    - Treat each distinct requested detail as a separate question. For example, marriage timing, wife appearance, career growth, fiance job, salary, government/private job are separate questions even when they appear in one sentence.
+                    - A phrase like "government job hogi ya private" is ONE question with two alternatives, not two questions.
+                    - Keep background/context attached to the question it explains.
+                    - Do NOT split one question into fragments such as "kab" and "shaadi hogi" when they are one intent.
+                    - Do NOT merge separate details just because they are about the same person/topic.
+                    - Do NOT split normal descriptive context into fake questions.
+                    - If there are N distinct answerable intents, return N items in the original order.
+                    - If there is only one answerable intent, return exactly one item.
+                    - Return at most 20 items. If there are more, preserve the first 20 in order.
+
+                    Examples:
+                    1) "Meri shadi hogi? Or hogi to kab tak hogi? Duto my baldness har ladki mujhe reject kar to hai"
+                    => {"questions":["Meri shadi hogi?","hogi to kab tak hogi?","Duto my baldness har ladki mujhe reject kar to hai"]}
+
+                    2) "Meri shadi Kase hogi Love marriage hogi ya arrenge marriage ladaki kase hogi job karegi ya nahi government ya pravet kis field mein job karegi wife dikhne main kase hogi uska family bagraound uska face look"
+                    => split into the separate marriage/marriage-type/wife/job/appearance/family questions in the same order.
+
+                    3) "Meri shaadi kab hogi aur kya career stable rahega?"
+                    => {"questions":["Meri shaadi kab hogi","kya career stable rahega?"]}
+                    PROMPT
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $message,
+                ],
+            ];
+
+            $raw = $this->openAiService->chat($classifierMessages);
+            $decoded = $this->decodeQuestionClassifierResponse($raw);
+
+            if (!empty($decoded)) {
+                return $decoded;
+            }
+        } catch (Throwable $e) {
+            Log::warning('AI_QUESTION_CLASSIFIER_FAILED', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        return $this->splitUserQuestionsHeuristic($message);
+    }
+
+    /**
+     * Parse the classifier response safely. The model is not trusted to return
+     * perfect JSON, so code fences and surrounding text are stripped first.
+     */
+    private function decodeQuestionClassifierResponse(string $response): array
+    {
+        $response = trim($response);
+
+        if ($response === '') {
+            return [];
+        }
+
+        $response = preg_replace('/^```(?:json)?\s*/iu', '', $response);
+        $response = preg_replace('/\s*```$/u', '', $response);
+        $response = trim($response);
+
+        $decoded = json_decode($response, true);
+
+        if (!is_array($decoded) || !isset($decoded['questions']) || !is_array($decoded['questions'])) {
+            $start = strpos($response, '{');
+            $end = strrpos($response, '}');
+
+            if ($start !== false && $end !== false && $end > $start) {
+                $decoded = json_decode(substr($response, $start, $end - $start + 1), true);
+            }
+        }
+
+        if (!is_array($decoded) || !isset($decoded['questions']) || !is_array($decoded['questions'])) {
+            return [];
+        }
+
+        $questions = [];
+
+        foreach ($decoded['questions'] as $question) {
+            if (!is_string($question)) {
+                continue;
+            }
+
+            $question = trim(preg_replace('/\s+/u', ' ', $question));
+
+            if ($question !== '') {
+                $questions[] = $question;
+            }
+
+            if (count($questions) >= 20) {
+                break;
+            }
+        }
+
+        return array_values(array_unique($questions));
+    }
+
+    /**
+     * Fallback parser for cases where the classifier API is unavailable.
+     * This is intentionally conservative so normal context is not fragmented.
+     */
+    private function splitUserQuestionsHeuristic(string $message): array
     {
         $message = trim(preg_replace('/\s+/u', ' ', $message));
 
@@ -3160,26 +3309,13 @@ class AiChatApiController extends Controller
             'kya', 'kyu', 'kyon', 'kaise', 'kab', 'kahan', 'kaha',
             'kaunsa', 'konsa', 'kaunsi', 'konsi', 'kis', 'kisme',
             'kisko', 'kitna', 'kitni', 'kitne', 'kiski', 'kisliye',
-            'kyunki', 'when', 'where', 'why', 'how', 'which', 'what',
-            'who', 'will', 'should', 'can', 'could', 'would',
+            'when', 'where', 'why', 'how', 'which', 'what', 'who',
+            'will', 'should', 'can', 'could', 'would',
         ];
 
-        /*
-         * Explicit question marks. If there is only one question mark, keep
-         * trailing text attached unless that trailing text itself looks like
-         * another question. This prevents:
-         * "Meri shaadi kab hogi? batao detail mein"
-         * from being treated as two questions.
-         */
         $questionMarkCount = preg_match_all('/[?？]/u', $message);
 
-        $parts = preg_split(
-            '/[?？]+\s*/u',
-            $message,
-            -1,
-            PREG_SPLIT_NO_EMPTY
-        );
-
+        $parts = preg_split('/[?？]+\s*/u', $message, -1, PREG_SPLIT_NO_EMPTY);
         $parts = $this->cleanQuestionParts($parts);
 
         if ($questionMarkCount > 1) {
@@ -3190,18 +3326,7 @@ class AiChatApiController extends Controller
             return $parts;
         }
 
-        /*
-         * Split conjunctions only when BOTH sides look question-like.
-         * This avoids breaking a normal sentence such as:
-         * "career aur business mein growth".
-         */
-        $parts = preg_split(
-            '/\s+(?:aur|and|plus|also)\s+/iu',
-            $message,
-            -1,
-            PREG_SPLIT_NO_EMPTY
-        );
-
+        $parts = preg_split('/\s+(?:aur|or|and|plus|also)\s+/iu', $message, -1, PREG_SPLIT_NO_EMPTY);
         $parts = $this->cleanQuestionParts($parts);
 
         if (count($parts) > 1) {
@@ -3218,17 +3343,7 @@ class AiChatApiController extends Controller
             }
         }
 
-        /*
-         * Comma/semicolon separated questions. Only split when at least two
-         * clauses clearly contain question words.
-         */
-        $parts = preg_split(
-            '/\s*[,;]\s*/u',
-            $message,
-            -1,
-            PREG_SPLIT_NO_EMPTY
-        );
-
+        $parts = preg_split('/\s*[,;]\s*/u', $message, -1, PREG_SPLIT_NO_EMPTY);
         $parts = $this->cleanQuestionParts($parts);
 
         if (count($parts) > 1) {
@@ -3246,6 +3361,36 @@ class AiChatApiController extends Controller
         }
 
         return [$message];
+    }
+
+    private function isContinuationMessage(?string $message): bool
+    {
+        $message = trim((string) $message);
+        $message = preg_replace('/[.!?,]+$/u', '', $message);
+        $message = preg_replace('/\s+/u', ' ', $message);
+
+        return (bool) preg_match(
+            '/^(haan|ha|han|yes|yup|yep|ok|okay|batao|haan batao|ha batao|yes tell me|tell me|continue|next|aage batao|aage|bilkul)$/iu',
+            $message
+        );
+    }
+
+    private function getPendingQuestions(AiChatSession $session): array
+    {
+        $pending = $session->pending_questions ?? [];
+
+        if (is_string($pending)) {
+            $pending = json_decode($pending, true) ?? [];
+        }
+
+        if (!is_array($pending)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(
+            static fn ($question) => is_string($question) ? trim($question) : '',
+            $pending
+        )));
     }
 
     private function containsQuestionWord(string $text, array $questionWords): bool
@@ -3274,7 +3419,7 @@ class AiChatApiController extends Controller
             }
 
             $part = preg_replace(
-                '/^(?:aur|and|plus|also)\s+/iu',
+                '/^(?:aur|or|and|plus|also)\s+/iu',
                 '',
                 $part
             );
