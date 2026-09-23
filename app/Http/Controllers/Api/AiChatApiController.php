@@ -718,8 +718,8 @@ class AiChatApiController extends Controller
 
             $nextPendingQuestion = $pendingQuestions[0] ?? null;
 
-            $responseMinWords = $isFree ? 50 : 60;
-            $responseMaxWords = $isFree ? 60 : 150;
+            $responseMinWords = 10;
+            $responseMaxWords = $isFree ? 50 : 100;
 
             $messages = $this->buildAiMessagePayload(
                 $systemPrompt,
@@ -749,7 +749,7 @@ class AiChatApiController extends Controller
                     $reply = $this->openAiService->chat($messages);
                     $reply = $this->sanitizeReply($reply);
 
-                    // Product word-count targets: free 50–60 words, paid 60–150 words. Only run the editorial pass
+                    // Product word-count targets: free 10–50 words, paid 10–100 words. Only run the editorial pass
                     // when the first answer falls outside the requested range.
                     $reply = $this->ensureReplyWordCount(
                         $reply,
@@ -1985,7 +1985,7 @@ class AiChatApiController extends Controller
         bool $isDatabaseQuestion,
         array $currentQuestionMeta = [],
         ?array $nextPendingQuestion = null,
-        int $responseMinWords = 50,
+        int $responseMinWords = 10,
         int $responseMaxWords = 100
     ): array {
         $messages = [
@@ -2049,7 +2049,7 @@ class AiChatApiController extends Controller
         string $currentQuestion,
         array $currentQuestionMeta = [],
         ?array $nextPendingQuestion = null,
-        int $responseMinWords = 50,
+        int $responseMinWords = 10,
         int $responseMaxWords = 100
     ): string {
         $currentQuestion = trim($currentQuestion);
