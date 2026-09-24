@@ -718,8 +718,11 @@ class AiChatApiController extends Controller
 
             $nextPendingQuestion = $pendingQuestions[0] ?? null;
 
+            // Product word-count targets: free 10–40 words, paid 10–100 words.
+            // The final free response (including any application-added continuation
+            // line) is hard-limited to 45 words.
             $responseMinWords = 10;
-            $responseMaxWords = $isFree ? 50 : 100;
+            $responseMaxWords = $isFree ? 40 : 100;
 
             $messages = $this->buildAiMessagePayload(
                 $systemPrompt,
@@ -777,6 +780,15 @@ class AiChatApiController extends Controller
                     $reply = $this->appendSingleQuestionContinuation(
                         $reply,
                         $session,
+                        $currentQuestionMeta
+                    );
+                }
+
+                // Free replies are kept short even after the application-added
+                // pending-question/continuation text is appended.
+                if ($isFree) {
+                    $reply = $this->enforceFinalFreeReplyBudget(
+                        $reply,
                         $currentQuestionMeta
                     );
                 }
@@ -2361,9 +2373,92 @@ class AiChatApiController extends Controller
     }
 
     /**
-     * Keep answer length inside the product's free/paid word range without
+     * Keep the main answer inside the product's free/paid word range without
      * changing the user's language, current-topic scope or astrology meaning.
      */
+    /**
+     * Final free-chat guardrail.
+     *
+     * Main free answer target is 10–40 words. Because the application can
+     * append a continuation/pending-question line afterwards, the final
+     * response is allowed up to 45 words and never beyond that.
+     */
+    private function enforceFinalFreeReplyBudget(
+        string $reply,
+        array $questionMeta = []
+    ): string {
+        $reply = trim($reply);
+
+        if ($reply === '') {
+            return $reply;
+        }
+
+        $wordCount = $this->countReplyWords($reply);
+
+        if ($wordCount >= 10 && $wordCount <= 40) {
+            return $reply;
+        }
+
+        try {
+            $language = trim((string) ($questionMeta['language_name'] ?? ''));
+            $languageCode = trim((string) ($questionMeta['language_code'] ?? ''));
+            $style = trim((string) ($questionMeta['style'] ?? 'auto'));
+
+            $languageInstruction = $language !== ''
+                ? "Language: {$language}."
+                : "Language code: " . ($languageCode !== '' ? $languageCode : 'auto') . ".";
+
+            if ($style !== '') {
+                $languageInstruction .= " Style: {$style}.";
+            }
+
+            $messages = [
+                [
+                    'role' => 'system',
+                    'content' => "You are a strict final-length editor for an astrology chat application.\n\n"
+                        . "{$languageInstruction}\n"
+                        . "Rewrite the complete response to 10-40 words if possible.\n"
+                        . "If 40 words is not possible, keep it no longer than 45 words.\n"
+                        . "Preserve the current answer's topic and meaning.\n"
+                        . "Keep the same language/script/style.\n"
+                        . "Do not answer any next/pending question.\n"
+                        . "If the response already contains a pending-question or continuation invitation, keep only a very short invitation at the end.\n"
+                        . "Do not remove the actual current answer merely to add unrelated information.\n"
+                        . "Return ONLY the final response.",
+                ],
+                [
+                    'role' => 'user',
+                    'content' => $reply,
+                ],
+            ];
+
+            $edited = $this->openAiService->chat($messages);
+            $edited = $this->sanitizeReply($edited);
+            $editedCount = $this->countReplyWords($edited);
+
+            if ($edited !== '' && $editedCount >= 10 && $editedCount <= 40) {
+                return $edited;
+            }
+
+            if ($edited !== '' && $editedCount <= 45) {
+                return $edited;
+            }
+        } catch (Throwable $e) {
+            Log::warning('AI_FINAL_FREE_REPLY_BUDGET_FAILED', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        // Absolute safety cap: never let the free response exceed 45 words.
+        $tokens = preg_split('/\s+/u', trim($reply), -1, PREG_SPLIT_NO_EMPTY);
+        if (count($tokens) > 45) {
+            $reply = implode(' ', array_slice($tokens, 0, 45));
+            $reply = rtrim($reply, " ,.;:!?—-\t\n\r") . '…';
+        }
+
+        return $reply;
+    }
+
     private function ensureReplyWordCount(
         string $reply,
         int $minWords,
