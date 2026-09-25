@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\AiChatApiController;
 use App\Http\Controllers\Api\AiChatSessionApiController;
 use App\Http\Controllers\Api\AiChatTransactionApiController;
 use App\Http\Controllers\Api\AiAstrologyController;
+use App\Http\Controllers\Api\AiAstrologerReviewController;
 use App\Http\Controllers\Api\AiAstrologerExpertiseQuestionController;
 
 /*
@@ -47,6 +48,9 @@ Route::post('/call/webhook', [EasyGoApiController::class, 'callWebhook']);
 Route::get('/ai-astrologers', [AiAstrologyController::class, 'index']);
 Route::get('/ai-astrologers/{slug}', [AiAstrologyController::class, 'show']);
 Route::get('/ai-astrologer-expertise/{slug}/questions', [AiAstrologerExpertiseQuestionController::class, 'index']);
+
+// AI Astrologer Reviews 
+Route::get('astrologer/reviews', [AiAstrologerReviewController::class, 'index']);
 
 // USER AUTH
 Route::prefix('user')->group(function () {
@@ -190,6 +194,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
             // AI Chat Transaction
             Route::get('/chat-transactions', [AiChatTransactionApiController::class, 'index']);
+
+            /*
+            |--------------------------------------------------------------------------
+            | AI Chat REVIEW
+            |--------------------------------------------------------------------------
+            */
+
+            // AI Astrologer Reviews
+            Route::post('astrologer/review', [AiAstrologerReviewController::class, 'store']);
+
+            Route::get('astrologer/my-review', [AiAstrologerReviewController::class, 'myReview']);
+
+            Route::delete('astrologer/review/{id}', [AiAstrologerReviewController::class, 'destroy']);
 
 
             /*
