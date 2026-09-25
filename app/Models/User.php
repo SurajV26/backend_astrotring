@@ -5,6 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
+use App\Models\AstrologerReview;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
@@ -252,6 +254,11 @@ class User extends Authenticatable
     public function receivedReviews()
     {
         return $this->hasMany(Review::class, 'astrologer_id');
+    }
+
+    public function aiAstrologerReviews(): HasMany
+    {
+        return $this->hasMany(AstrologerReview::class, 'user_id');
     }
 
     public function payoutRequests()

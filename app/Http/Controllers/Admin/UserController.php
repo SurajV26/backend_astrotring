@@ -13,6 +13,7 @@ use App\Models\AiChatTransaction;
 use App\Models\AiAstrologer;
 use App\Models\AiAstrologerExpertise;
 use App\Models\ChatSession;
+use App\Models\AstrologerReview;
 use App\Models\Review;
 use App\Models\Country;
 use App\Models\State;
@@ -31,6 +32,7 @@ class UserController extends AdminController
     public function getList(Request $request)
     {
         $list = User::where("type", "user")
+            ->when($request->user_id !== null && $request->user_id !== "", fn($q) => $q->where("id", $request->user_id))
             ->when($request->status !== null && $request->status !== "", fn($q) => $q->where("status", $request->status))
             ->orderByDesc("id");
 
@@ -132,7 +134,11 @@ class UserController extends AdminController
 
     public function getUpdate(Request $request)
     {
-        $user = User::with("wallet")->findOrFail($request->id);
+        $user = User::with([
+            'wallet',
+            'reviews.astrologer:id,name,code',
+            'aiAstrologerReviews.astrologer:id,name,slug',
+        ])->findOrFail($request->id);
 
         return view('admin.users.update', compact('user'));
     }
@@ -140,153 +146,364 @@ class UserController extends AdminController
     public function postUpdate(Request $request)
     {
         $validator = \Validator::make($request->all(), [
-            "code"     => "required|string|max:255|unique:users,code,{$request->id}",
-            "name"     => "required|string|max:255",
-            "email"    => "required|email|unique:users,email,{$request->id}",
+
+            // =========================
+            // USER
+            // =========================
+            "code" => "required|string|max:255|unique:users,code,{$request->id}",
+            "name" => "required|string|max:255",
+            "email" => "required|email|unique:users,email,{$request->id}",
             "country_code" => "required|string|max:5",
-            "mobile"   => "nullable|digits:10|unique:users,mobile,{$request->id}",
+            "mobile" => "nullable|digits:10|unique:users,mobile,{$request->id}",
             "username" => "required|unique:users,username,{$request->id}",
             "password" => "nullable|min:6|confirmed",
 
-            "dob"         => "nullable|date",
-            "birth_time"  => "nullable",
+            "dob" => "nullable|date",
+            "birth_time" => "nullable",
             "birth_place" => "nullable|json",
-            "gender"      => "nullable|in:male,female,other",
-            
-            "pincode"      => "nullable|string|max:10",
+            "gender" => "nullable|in:male,female,other",
+
+            "pincode" => "nullable|string|max:10",
             "address" => "nullable|string|max:1000",
-            "about"   => "nullable|string|max:2000",
+            "about" => "nullable|string|max:2000",
 
             "country_id" => "nullable|exists:countries,id",
-            "state_id"   => "nullable|exists:states,id",
-            "city_id"    => "nullable|exists:cities,id",
+            "state_id" => "nullable|exists:states,id",
+            "city_id" => "nullable|exists:cities,id",
             "pincode_id" => "nullable|exists:pin_codes,id",
 
             "profile_image" => "nullable|image|max:4096",
 
-            "balance"      => "nullable|numeric",
-            "total_earned" => "nullable|numeric",
+            // =========================
+            // WALLET
+            // =========================
+            "balance" => "nullable|numeric",
 
-            "reviews"      => "nullable|array"
+            // =========================
+            // CALL REVIEWS
+            // =========================
+            "reviews" => "nullable|array",
+
+            "reviews.*.id" => "nullable|integer|exists:reviews,id",
+            "reviews.*.astrologer_id" => "nullable|integer|exists:users,id",
+            "reviews.*.rating" => "nullable|integer|between:1,5",
+            "reviews.*.review" => "nullable|string|max:5000",
+            "reviews.*.delete" => "nullable|boolean",
+
+            // =========================
+            // CHAT / AI ASTROLOGER REVIEWS
+            // =========================
+            "chat_reviews" => "nullable|array",
+
+            "chat_reviews.*.id" => "nullable|integer|exists:astrologer_reviews,id",
+            "chat_reviews.*.astrologer_id" => "nullable|integer|exists:ai_astrologers,id",
+            "chat_reviews.*.rating" => "nullable|integer|between:1,5",
+            "chat_reviews.*.review" => "nullable|string|max:5000",
+            "chat_reviews.*.delete" => "nullable|boolean",
+
+            // =========================
+            // CHAT REVIEW
+            // =========================
+            "new_chat_review_astrologer_id" => [
+                "nullable",
+                "integer",
+                "exists:ai_astrologers,id",
+            ],
+
+            "new_chat_review_rating" => [
+                "nullable",
+                "integer",
+                "between:1,5",
+            ],
+
+            "new_chat_review_text" => [
+                "nullable",
+                "string",
+                "max:5000",
+            ],
         ]);
 
         if ($validator->fails()) {
-            return response()->json(["message" => $validator->errors()->first()], 422);
+            return response()->json([
+                "message" => $validator->errors()->first(),
+            ], 422);
+        }
+
+        /*
+        * If one of new chat astrologer/rating is provided,
+        * both are required.
+        */
+        if (
+            $request->filled('new_chat_review_astrologer_id') &&
+            !$request->filled('new_chat_review_rating')
+        ) {
+            return response()->json([
+                'message' => 'Chat review rating is required.',
+            ], 422);
+        }
+
+        if (
+            $request->filled('new_chat_review_rating') &&
+            !$request->filled('new_chat_review_astrologer_id')
+        ) {
+            return response()->json([
+                'message' => 'Chat astrologer is required.',
+            ], 422);
         }
 
         try {
 
-            $user = User::with(["wallet", "reviews"])->findOrFail($request->id);
+            DB::transaction(function () use ($request) {
 
-            // ======================
-            // BASIC USER UPDATE
-            // ======================
-            $user->code       = $request->code;
-            $user->name       = $request->name;
-            $user->email      = strtolower($request->email);
-            $user->country_code     = $request->country_code;
-            $user->mobile     = $request->mobile;
-            $user->username   = strtolower($request->username);
+                $user = User::with([
+                    'wallet',
+                    'reviews',
+                    'aiAstrologerReviews',
+                ])->findOrFail($request->id);
 
-            if ($request->filled("password")) {
-                $user->password = bcrypt($request->password);
-            }
+                // =====================================================
+                // BASIC USER UPDATE
+                // =====================================================
 
-            $user->dob         = $request->dob;
-            $user->birth_time  = $request->birth_time;
-            $user->birth_place = $request->filled('birth_place')
-                ? json_decode($request->birth_place, true)
-                : null;
-            $user->gender      = $request->gender;
-            $user->pincode     = $request->pincode;
-            $user->address     = $request->address;
-            $user->about       = $request->about;
+                $user->code = $request->code;
+                $user->name = $request->name;
+                $user->email = strtolower($request->email);
+                $user->country_code = $request->country_code;
+                $user->mobile = $request->mobile;
+                $user->username = strtolower($request->username);
 
-            $user->country_id = $request->country_id;
-            $user->state_id   = $request->state_id;
-            $user->city_id    = $request->city_id;
-            $user->pincode_id = $request->pincode_id;
+                if ($request->filled("password")) {
+                    $user->password = bcrypt($request->password);
+                }
 
-            $user->modified_by = auth()->id();
+                $user->dob = $request->dob;
+                $user->birth_time = $request->birth_time;
 
-            if ($request->hasFile("profile_image")) {
-                $user->profile_image = uploadFile("profile_image", 128, 128,"user", $user->profile_image);
-            }
+                $user->birth_place = $request->filled('birth_place')
+                    ? json_decode($request->birth_place, true)
+                    : null;
 
-            $user->save();
+                $user->gender = $request->gender;
+                $user->pincode = $request->pincode;
+                $user->address = $request->address;
+                $user->about = $request->about;
 
+                $user->country_id = $request->country_id;
+                $user->state_id = $request->state_id;
+                $user->city_id = $request->city_id;
+                $user->pincode_id = $request->pincode_id;
 
-            // ======================
-            // WALLET UPDATE
-            // ======================
-            if (!$user->wallet) {
-                $user->wallet()->create([
-                    "balance"      => $request->balance ?? 0,
-                ]);
-            } else {
-                $user->wallet->update([
-                    "balance"      => $request->balance ?? $user->wallet->balance,
-                ]);
-            }
+                $user->modified_by = auth()->id();
 
-            // ======================
-            // REVIEWS UPDATE SECTION
-            // ======================
-            if ($request->has("reviews")) {
-                foreach ($request->reviews as $reviewId => $data) {
+                if ($request->hasFile("profile_image")) {
+                    $user->profile_image = uploadFile(
+                        "profile_image",
+                        128,
+                        128,
+                        "user",
+                        $user->profile_image
+                    );
+                }
 
-                    $review = Review::where("id", $reviewId)
-                                    ->where("user_id", $user->id)
-                                    ->first();
+                $user->save();
 
-                    if (!$review) continue;
+                // =====================================================
+                // WALLET UPDATE
+                // =====================================================
 
-                    $oldAstrologer = $review->astrologer_id;
+                if (!$user->wallet) {
 
-                    // Delete review
-                    if (!empty($data["delete"]) && $data["delete"] == 1) {
-                        $review->delete();
-                        $this->calculateRating($oldAstrologer);
-                        continue;
-                    }
-
-                    // Update review
-                    $review->update([
-                        "astrologer_id" => $data["astrologer_id"] ?? $review->astrologer_id,
-                        "rating"        => $data["rating"] ?? $review->rating,
-                        "review"        => $data["review"] ?? $review->review,
+                    $user->wallet()->create([
+                        "balance" => $request->balance ?? 0,
                     ]);
 
-                    // Recalculate ratings
-                    $this->calculateRating($oldAstrologer);
-                    $this->calculateRating($review->astrologer_id);
+                } else {
+
+                    $user->wallet->update([
+                        "balance" => $request->balance ?? $user->wallet->balance,
+                    ]);
                 }
-            }
 
-            // ===========================================
-            // ADD NEW REVIEW
-            // ===========================================
-            if (
-                $request->filled("new_review_astrologer_id")
-                && $request->filled("new_review_rating")
-            ) {
-                $newReview = Review::create([
-                    "user_id"       => $user->id,
-                    "astrologer_id" => $request->new_review_astrologer_id,
-                    "rating"        => $request->new_review_rating,
-                    "review"        => $request->new_review_text,
-                ]);
+                // =====================================================
+                // CALL REVIEWS UPDATE
+                // reviews table
+                // =====================================================
 
-                // Recalculate rating for astrologer
-                $this->calculateRating($newReview->astrologer_id);
-            }
+                if ($request->has("reviews")) {
 
-            return response()->json(["message" => "User updated successfully"]);
+                    foreach ($request->reviews as $reviewId => $data) {
+
+                        $review = Review::query()
+                            ->where("id", $reviewId)
+                            ->where("user_id", $user->id)
+                            ->first();
+
+                        if (!$review) {
+                            continue;
+                        }
+
+                        $oldAstrologer = $review->astrologer_id;
+
+                        // Delete call review
+                        if (!empty($data["delete"])) {
+
+                            $review->delete();
+
+                            $this->calculateRating($oldAstrologer);
+
+                            continue;
+                        }
+
+                        $newAstrologer = $data["astrologer_id"]
+                            ?? $review->astrologer_id;
+
+                        /*
+                        * Prevent invalid/duplicate call review if needed.
+                        */
+                        $review->update([
+                            "astrologer_id" => $newAstrologer,
+                            "rating" => $data["rating"] ?? $review->rating,
+                            "review" => $data["review"] ?? $review->review,
+                        ]);
+
+                        $this->calculateRating($oldAstrologer);
+
+                        if ($oldAstrologer != $newAstrologer) {
+                            $this->calculateRating($newAstrologer);
+                        }
+                    }
+                }
+
+                // =====================================================
+                // CALL REVIEW
+                // =====================================================
+
+                if (
+                    $request->filled("new_review_astrologer_id") &&
+                    $request->filled("new_review_rating")
+                ) {
+
+                    $newReview = Review::create([
+                        "user_id" => $user->id,
+                        "astrologer_id" => $request->new_review_astrologer_id,
+                        "rating" => $request->new_review_rating,
+                        "review" => $request->new_review_text,
+                    ]);
+
+                    $this->calculateRating($newReview->astrologer_id);
+                }
+
+                // =====================================================
+                // CHAT / AI ASTROLOGER REVIEWS UPDATE
+                // astrologer_reviews table
+                // =====================================================
+
+                if ($request->has("chat_reviews")) {
+
+                    foreach ($request->chat_reviews as $reviewId => $data) {
+
+                        $chatReview = AstrologerReview::query()
+                            ->where("id", $reviewId)
+                            ->where("user_id", $user->id)
+                            ->first();
+
+                        if (!$chatReview) {
+                            continue;
+                        }
+
+                        /*
+                        * Delete chat review.
+                        *
+                        * We use is_active = false instead of
+                        * permanently deleting the record.
+                        */
+                        if (!empty($data["delete"])) {
+
+                            $chatReview->update([
+                                "is_active" => false,
+                            ]);
+
+                            continue;
+                        }
+
+                        $newAstrologerId = $data["astrologer_id"]
+                            ?? $chatReview->astrologer_id;
+
+                        /*
+                        * Prevent duplicate active review:
+                        *
+                        * Same user + same AI astrologer
+                        * can have only one active review.
+                        */
+                        $duplicateReview = AstrologerReview::query()
+                            ->where("user_id", $user->id)
+                            ->where("astrologer_id", $newAstrologerId)
+                            ->where("id", "!=", $chatReview->id)
+                            ->where("is_active", true)
+                            ->exists();
+
+                        if ($duplicateReview) {
+                            throw \Illuminate\Validation\ValidationException::withMessages([
+                                'chat_reviews' => [
+                                    'This user already has a review for the selected AI astrologer.',
+                                ],
+                            ]);
+                        }
+
+                        $chatReview->update([
+                            "astrologer_id" => $newAstrologerId,
+                            "rating" => $data["rating"] ?? $chatReview->rating,
+                            "review" => $data["review"] ?? $chatReview->review,
+                            "is_active" => true,
+                        ]);
+                    }
+                }
+
+                // =====================================================
+                // ADD / UPDATE CHAT REVIEW
+                // astrologer_reviews table
+                // =====================================================
+
+                if (
+                    $request->filled("new_chat_review_astrologer_id") &&
+                    $request->filled("new_chat_review_rating")
+                ) {
+
+                    $chatReview = AstrologerReview::updateOrCreate(
+                        [
+                            "user_id" => $user->id,
+                            "astrologer_id" => $request->new_chat_review_astrologer_id,
+                        ],
+                        [
+                            "rating" => $request->new_chat_review_rating,
+                            "review" => $request->new_chat_review_text,
+                            "is_active" => true,
+                        ]
+                    );
+                }
+            });
+
+            return response()->json([
+                "message" => "User updated successfully",
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+
+            return response()->json([
+                "message" => $e->validator->errors()->first(),
+            ], 422);
 
         } catch (\Exception $e) {
-            \Log::error($e);
+
+            \Log::error('USER_UPDATE_ERROR', [
+                'user_id' => $request->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
             return response()->json([
-                "message" => "Something went wrong: " . $e->getMessage()
+                "message" => "Something went wrong: " . $e->getMessage(),
             ], 500);
         }
     }
@@ -313,7 +530,12 @@ class UserController extends AdminController
     {
         $user = User::with([
             'wallet',
-            'reviews.astrologer:id,name,code'
+            'reviews.astrologer:id,name,code',
+            'aiAstrologerReviews' => function ($query) {
+                $query->where('is_active', true)
+                    ->with('astrologer:id,name,slug,image')
+                    ->latest();
+            },
         ])
             ->where('type', 'user')
             ->findOrFail($id);
@@ -481,6 +703,27 @@ class UserController extends AdminController
             ->take(10)
             ->get();
 
+        /* ================= CHAT / AI ASTROLOGER REVIEWS ================= */
+
+        $chatReviewQuery = AstrologerReview::query()
+            ->where('user_id', $id)
+            ->where('is_active', true);
+
+        $chatReviewSummary = [
+            'total_reviews' => (clone $chatReviewQuery)->count(),
+
+            'average_rating' => round(
+                (float) ((clone $chatReviewQuery)->avg('rating') ?? 0),
+                1
+            ),
+        ];
+
+        $latest_chat_reviews = (clone $chatReviewQuery)
+            ->with('astrologer:id,name,slug,image')
+            ->latest()
+            ->take(10)
+            ->get();
+
         return view('admin.users.view', compact(
             'user',
             'callSummary',
@@ -494,7 +737,9 @@ class UserController extends AdminController
             'lastAnswers',
             'aiChatHistory',
             'rechargeHistory',
-            'latest_reviews'
+            'latest_reviews',
+            'chatReviewSummary',
+            'latest_chat_reviews'
         ));
     }
 

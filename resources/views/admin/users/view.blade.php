@@ -52,7 +52,7 @@
 
             </div>
 
-            <div class="card shadow-sm mt-3">
+            {{-- <div class="card shadow-sm mt-3">
 
                 <div class="card-header bg-primary text-white">
 
@@ -106,9 +106,9 @@
 
                 </div>
 
-            </div>
+            </div> --}}
 
-            <div class="card shadow-sm mt-3">
+            {{-- <div class="card shadow-sm mt-3">
 
                 <div class="card-header bg-info text-white">
 
@@ -162,6 +162,114 @@
 
                         </div>
 
+                    @endforelse
+
+                </div>
+
+            </div> --}}
+
+            <!-- CHAT REVIEW SUMMARY -->
+            <div class="card shadow-sm mt-3">
+
+                <div class="card-header bg-primary text-white">
+                    Chat Review Summary
+                </div>
+
+                <div class="card-body p-2">
+
+                    <table class="table table-bordered table-sm mb-0">
+
+                        <tr>
+                            <th>Total Chat Reviews</th>
+                            <td>
+                                {{ $chatReviewSummary['total_reviews'] }}
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th>Average Chat Rating</th>
+
+                            <td>
+
+                                <strong>
+                                    {{ number_format($chatReviewSummary['average_rating'], 1) }}
+                                </strong>
+
+                                <br>
+
+                                <span class="text-warning">
+
+                                    @for ($i = 1; $i <= 5; $i++)
+                                        {!! $i <= round($chatReviewSummary['average_rating']) ? '&#9733;' : '&#9734;' !!}
+                                    @endfor
+
+                                </span>
+
+                            </td>
+                        </tr>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+            <!-- LATEST CHAT REVIEWS -->
+            <div class="card shadow-sm mt-3">
+
+                <div class="card-header bg-success text-white">
+                    Latest Chat Reviews
+                </div>
+
+                <div class="card-body p-2" style="max-height:320px;overflow-y:auto;">
+
+                    @forelse($latest_chat_reviews as $review)
+
+                        <div class="border rounded p-2 mb-2">
+
+                            <div class="fw-bold">
+
+                                {{ $review->astrologer->name ?? 'N/A' }}
+
+                                @if (!empty($review->astrologer?->slug))
+                                    <small class="text-muted">
+                                        ({{ $review->astrologer->slug }})
+                                    </small>
+                                @endif
+
+                            </div>
+
+                            <div class="text-warning">
+
+                                @for ($i = 1; $i <= 5; $i++)
+                                    {!! $i <= $review->rating ? '&#9733;' : '&#9734;' !!}
+                                @endfor
+
+                                <span class="text-dark ms-1">
+                                    {{ $review->rating }}/5
+                                </span>
+
+                            </div>
+
+                            <div class="small mt-1">
+
+                                {{ $review->review ?: 'No Review Comment' }}
+
+                            </div>
+
+                            <div class="text-muted small mt-2">
+
+                                {{ optional($review->created_at)->format('d M Y h:i A') }}
+
+                            </div>
+
+                        </div>
+
+                    @empty
+
+                        <div class="alert alert-light text-center mb-0">
+                            No Chat Reviews Found
+                        </div>
                     @endforelse
 
                 </div>
@@ -455,7 +563,7 @@
                             <td>{{ $aiChatSummary->free_questions }}</td>
                         </tr>
 
-                        <tr>
+                        {{-- <tr>
                             <th>Paid Questions</th>
                             <td>{{ $aiChatSummary->paid_questions }}</td>
                         </tr>
@@ -463,7 +571,7 @@
                         <tr>
                             <th>Total Questions</th>
                             <td>{{ $totalQuestions }}</td>
-                        </tr>
+                        </tr> --}}
 
                         <tr>
                             <th>Total AI Replies</th>
@@ -480,7 +588,7 @@
 
                         </tr>
 
-                        <tr>
+                        {{-- <tr>
 
                             <th>Average Cost</th>
 
@@ -494,7 +602,7 @@
 
                             </td>
 
-                        </tr>
+                        </tr> --}}
 
                         <tr>
 
@@ -980,7 +1088,7 @@
 
                                             <tr>
 
-                                                <th>Free Questions</th>
+                                                <th>Free Questions Used</th>
 
                                                 <td>
 
@@ -990,7 +1098,7 @@
 
                                             </tr>
 
-                                            <tr>
+                                            {{-- <tr>
 
                                                 <th>Paid Questions</th>
 
@@ -1000,9 +1108,9 @@
 
                                                 </td>
 
-                                            </tr>
+                                            </tr> --}}
 
-                                            <tr>
+                                            {{-- <tr>
 
                                                 <th>Total Questions</th>
 
@@ -1012,7 +1120,7 @@
 
                                                 </td>
 
-                                            </tr>
+                                            </tr> --}}
 
                                             <tr>
 

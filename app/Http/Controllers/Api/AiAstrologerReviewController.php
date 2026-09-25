@@ -14,16 +14,6 @@ class AiAstrologerReviewController extends Controller
 {
     /**
      * Add or update a review for an astrologer.
-     *
-     * User ID is always taken from the authenticated user.
-     *
-     * Astrologer can be identified by:
-     * - astrologer_id
-     * - astrologer_slug
-     * - or both
-     *
-     * If both ID and slug are provided, they must belong
-     * to the same astrologer.
      */
     public function store(Request $request): JsonResponse
     {
@@ -62,9 +52,6 @@ class AiAstrologerReviewController extends Controller
             ],
         ]);
 
-        /*
-         * At least one astrologer identifier is required.
-         */
         if (
             empty($validated['astrologer_id']) &&
             empty($validated['astrologer_slug'])
@@ -76,9 +63,6 @@ class AiAstrologerReviewController extends Controller
             ]);
         }
 
-        /*
-         * Find astrologer by ID, slug, or both.
-         */
         $astrologer = $this->findAstrologer($validated);
 
         if (!$astrologer) {
@@ -91,10 +75,8 @@ class AiAstrologerReviewController extends Controller
         }
 
         /*
-         * Create or update the user's review for this astrologer.
-         *
-         * One user can review many different astrologers,
-         * but one user can have only one active review per astrologer.
+         * One user can review multiple astrologers.
+         * Same user + same astrologer = update existing review.
          */
         $review = DB::transaction(function () use (
             $user,
@@ -115,8 +97,14 @@ class AiAstrologerReviewController extends Controller
         });
 
         /*
-         * Get updated rating statistics.
+         * Load complete response data.
          */
+        $review->load([
+            'user:id,name,profile_image',
+            'astrologer:id,name,slug',
+            'astrologer.expertises:id,ai_astrologer_id,name,slug',
+        ]);
+
         $ratingStats = $this->getRatingStats($astrologer->id);
 
         $message = $review->wasRecentlyCreated
@@ -126,14 +114,40 @@ class AiAstrologerReviewController extends Controller
         return response()->json([
             'status' => true,
             'message' => $message,
+
             'data' => [
                 'id' => $review->id,
-                'astrologer_id' => $astrologer->id,
-                'astrologer_slug' => $astrologer->slug,
+
+                'user' => [
+                    'id' => $review->user->id,
+                    'name' => $review->user->name,
+                    'profile_image' => $this->getProfileImageUrl(
+                        $review->user->profile_image
+                    ),
+                ],
+
+                'astrologer' => [
+                    'id' => $review->astrologer->id,
+                    'name' => $review->astrologer->name,
+                    'slug' => $review->astrologer->slug,
+
+                    'expertises' => $review->astrologer->expertises
+                        ->map(function ($expertise) {
+                            return [
+                                'id' => $expertise->id,
+                                'name' => $expertise->name,
+                                'slug' => $expertise->slug,
+                            ];
+                        })
+                        ->values(),
+                ],
+
                 'rating' => (int) $review->rating,
                 'review' => $review->review,
+
                 'average_rating' => $ratingStats['average_rating'],
                 'total_reviews' => $ratingStats['total_reviews'],
+
                 'created_at' => $review->created_at,
                 'updated_at' => $review->updated_at,
             ],
@@ -143,20 +157,16 @@ class AiAstrologerReviewController extends Controller
     /**
      * Get astrologer reviews.
      *
-     * CASE 1:
+     * Without filter:
      * GET /api/astrologer/reviews
      *
-     * Returns active reviews of ALL astrologers.
+     * Returns all active reviews of all astrologers.
      *
-     * CASE 2:
+     * With ID:
      * GET /api/astrologer/reviews?astrologer_id=8
      *
-     * Returns active reviews of astrologer ID 8 only.
-     *
-     * CASE 3:
+     * With slug:
      * GET /api/astrologer/reviews?astrologer_slug=dev-malhotra
-     *
-     * Returns active reviews of the given astrologer only.
      */
     public function index(Request $request): JsonResponse
     {
@@ -185,12 +195,12 @@ class AiAstrologerReviewController extends Controller
             !empty($validated['astrologer_slug']);
 
         /*
-         * ---------------------------------------------------------
-         * CASE 1:
-         * Specific astrologer requested
-         * ---------------------------------------------------------
+         * =========================================================
+         * SPECIFIC ASTROLOGER
+         * =========================================================
          */
         if ($hasAstrologerFilter) {
+
             $astrologer = $this->findAstrologer($validated);
 
             if (!$astrologer) {
@@ -206,24 +216,43 @@ class AiAstrologerReviewController extends Controller
 
             $reviews = AstrologerReview::query()
                 ->with([
-                    'user:id,name',
+                    'user:id,name,profile_image',
+
                     'astrologer:id,name,slug',
+
+                    'astrologer.expertises:id,ai_astrologer_id,name,slug',
                 ])
                 ->where('astrologer_id', $astrologer->id)
                 ->where('is_active', true)
                 ->latest()
                 ->paginate($perPage);
 
+            $reviews->getCollection()->transform(
+                fn ($review) => $this->formatReview($review)
+            );
+
             $ratingStats = $this->getRatingStats($astrologer->id);
 
             return response()->json([
                 'status' => true,
                 'message' => 'Astrologer reviews fetched successfully.',
+
                 'data' => [
                     'astrologer' => [
                         'id' => $astrologer->id,
                         'name' => $astrologer->name,
                         'slug' => $astrologer->slug,
+
+                        'expertises' => $astrologer->load('expertises')
+                            ->expertises
+                            ->map(function ($expertise) {
+                                return [
+                                    'id' => $expertise->id,
+                                    'name' => $expertise->name,
+                                    'slug' => $expertise->slug,
+                                ];
+                            })
+                            ->values(),
                     ],
 
                     'rating' => [
@@ -237,27 +266,32 @@ class AiAstrologerReviewController extends Controller
         }
 
         /*
-         * ---------------------------------------------------------
-         * CASE 2:
-         * No astrologer filter
-         *
-         * Return reviews of ALL astrologers.
-         * ---------------------------------------------------------
+         * =========================================================
+         * ALL ASTROLOGERS
+         * =========================================================
          */
         $perPage = $validated['per_page'] ?? 20;
 
         $reviews = AstrologerReview::query()
             ->with([
-                'user:id,name',
+                'user:id,name,profile_image',
+
                 'astrologer:id,name,slug',
+
+                'astrologer.expertises:id,ai_astrologer_id,name,slug',
             ])
             ->where('is_active', true)
             ->latest()
             ->paginate($perPage);
 
+        $reviews->getCollection()->transform(
+            fn ($review) => $this->formatReview($review)
+        );
+
         return response()->json([
             'status' => true,
             'message' => 'All astrologer reviews fetched successfully.',
+
             'data' => [
                 'total_reviews' => $reviews->total(),
                 'reviews' => $reviews,
@@ -266,22 +300,13 @@ class AiAstrologerReviewController extends Controller
     }
 
     /**
-     * Get reviews submitted by the logged-in user.
+     * Get reviews of logged-in user.
      *
-     * CASE 1:
-     * GET /api/user/astrologer/my-review
+     * Without filter:
+     * returns all reviews given by logged-in user.
      *
-     * Returns ALL active reviews submitted by the logged-in user.
-     *
-     * CASE 2:
-     * GET /api/user/astrologer/my-review?astrologer_id=8
-     *
-     * Returns only the logged-in user's review for astrologer 8.
-     *
-     * CASE 3:
-     * GET /api/user/astrologer/my-review?astrologer_slug=dev-malhotra
-     *
-     * Returns only the logged-in user's review for that astrologer.
+     * With astrologer ID/slug:
+     * returns only that user's review for that astrologer.
      */
     public function myReview(Request $request): JsonResponse
     {
@@ -319,12 +344,12 @@ class AiAstrologerReviewController extends Controller
             !empty($validated['astrologer_slug']);
 
         /*
-         * ---------------------------------------------------------
-         * CASE 1:
-         * Specific astrologer requested
-         * ---------------------------------------------------------
+         * =========================================================
+         * SPECIFIC ASTROLOGER
+         * =========================================================
          */
         if ($hasAstrologerFilter) {
+
             $astrologer = $this->findAstrologer($validated);
 
             if (!$astrologer) {
@@ -338,7 +363,11 @@ class AiAstrologerReviewController extends Controller
 
             $review = AstrologerReview::query()
                 ->with([
+                    'user:id,name,profile_image',
+
                     'astrologer:id,name,slug',
+
+                    'astrologer.expertises:id,ai_astrologer_id,name,slug',
                 ])
                 ->where('user_id', $user->id)
                 ->where('astrologer_id', $astrologer->id)
@@ -347,35 +376,45 @@ class AiAstrologerReviewController extends Controller
 
             return response()->json([
                 'status' => true,
+
                 'message' => $review
                     ? 'Your review fetched successfully.'
                     : 'You have not reviewed this astrologer yet.',
-                'data' => $review,
+
+                'data' => $review
+                    ? $this->formatReview($review)
+                    : null,
             ]);
         }
 
         /*
-         * ---------------------------------------------------------
-         * CASE 2:
-         * No astrologer filter
-         *
-         * Return ALL reviews of logged-in user.
-         * ---------------------------------------------------------
+         * =========================================================
+         * ALL REVIEWS OF LOGGED-IN USER
+         * =========================================================
          */
         $perPage = $validated['per_page'] ?? 10;
 
         $reviews = AstrologerReview::query()
             ->with([
+                'user:id,name,profile_image',
+
                 'astrologer:id,name,slug',
+
+                'astrologer.expertises:id,ai_astrologer_id,name,slug',
             ])
             ->where('user_id', $user->id)
             ->where('is_active', true)
             ->latest()
             ->paginate($perPage);
 
+        $reviews->getCollection()->transform(
+            fn ($review) => $this->formatReview($review)
+        );
+
         return response()->json([
             'status' => true,
             'message' => 'Your astrologer reviews fetched successfully.',
+
             'data' => [
                 'total_reviews' => $reviews->total(),
                 'reviews' => $reviews,
@@ -385,9 +424,6 @@ class AiAstrologerReviewController extends Controller
 
     /**
      * Delete logged-in user's own review.
-     *
-     * The review is not permanently deleted.
-     * It is deactivated using is_active = false.
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
@@ -425,26 +461,30 @@ class AiAstrologerReviewController extends Controller
 
     /**
      * Find astrologer by ID, slug, or both.
-     *
-     * If both are supplied, they must refer to the same astrologer.
      */
     private function findAstrologer(array $validated): ?AiAstrologer
     {
         $query = AiAstrologer::query();
 
         if (!empty($validated['astrologer_id'])) {
-            $query->where('id', $validated['astrologer_id']);
+            $query->where(
+                'id',
+                $validated['astrologer_id']
+            );
         }
 
         if (!empty($validated['astrologer_slug'])) {
-            $query->where('slug', $validated['astrologer_slug']);
+            $query->where(
+                'slug',
+                $validated['astrologer_slug']
+            );
         }
 
         return $query->first();
     }
 
     /**
-     * Check whether both astrologer ID and slug were supplied.
+     * Check whether both ID and slug were supplied.
      */
     private function hasBothAstrologerIdentifiers(array $validated): bool
     {
@@ -453,7 +493,61 @@ class AiAstrologerReviewController extends Controller
     }
 
     /**
-     * Get rating statistics for an astrologer.
+     * Format review response consistently.
+     */
+    private function formatReview(AstrologerReview $review): array
+    {
+        return [
+            'id' => $review->id,
+
+            'user' => [
+                'id' => $review->user?->id,
+                'name' => $review->user?->name,
+                'profile_image' => $this->getProfileImageUrl(
+                    $review->user?->profile_image
+                ),
+            ],
+
+            'astrologer' => [
+                'id' => $review->astrologer?->id,
+                'name' => $review->astrologer?->name,
+                'slug' => $review->astrologer?->slug,
+
+                'expertises' => $review->astrologer?->expertises
+                    ? $review->astrologer->expertises
+                        ->map(function ($expertise) {
+                            return [
+                                'id' => $expertise->id,
+                                'name' => $expertise->name,
+                                'slug' => $expertise->slug,
+                            ];
+                        })
+                        ->values()
+                    : [],
+            ],
+
+            'rating' => (int) $review->rating,
+            'review' => $review->review,
+            'is_active' => (bool) $review->is_active,
+            'created_at' => $review->created_at,
+            'updated_at' => $review->updated_at,
+        ];
+    }
+
+    /**
+     * Get profile image URL.
+     */
+    private function getProfileImageUrl(?string $image): string
+    {
+        if (!$image) {
+            return asset('default-user.png');
+        }
+
+        return asset('storage/user/' . $image);
+    }
+
+    /**
+     * Get rating statistics.
      */
     private function getRatingStats(int $astrologerId): array
     {
@@ -470,7 +564,10 @@ class AiAstrologerReviewController extends Controller
                 (float) ($stats->average_rating ?? 0),
                 1
             ),
-            'total_reviews' => (int) ($stats->total_reviews ?? 0),
+
+            'total_reviews' => (int) (
+                $stats->total_reviews ?? 0
+            ),
         ];
     }
 }

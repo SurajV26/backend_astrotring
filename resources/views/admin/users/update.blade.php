@@ -268,7 +268,7 @@
                             </div>
                         </div>
 
-                        <div class="card mt-3">
+                        {{-- <div class="card mt-3">
                             <div class="card-header d-flex justify-content-between">
                                 <h4 class="card-title mb-0">Ratings & Reviews Given</h4>
 
@@ -374,6 +374,165 @@
                                 @endforelse
 
                             </div>
+                        </div> --}}
+
+                        <!-- CHAT RATINGS & REVIEWS -->
+                        <div class="card mt-3">
+                            <div class="card-header d-flex justify-content-between">
+                                <h4 class="card-title mb-0">Chat Ratings & Reviews Given</h4>
+
+                                <button type="button" class="btn btn-sm btn-primary" id="addChatReviewBtn">
+                                    Add Review
+                                </button>
+                            </div>
+
+                            <div class="card-body">
+
+                                <!-- Add Chat Review Form -->
+                                <div id="addChatReviewForm" class="border p-3 mb-3 d-none">
+
+                                    <div class="form-group mb-2">
+                                        <label class="fw-bold">Select AI Astrologer</label>
+
+                                        <select id="new_chat_review_astro" class="form-control select2-class"
+                                            data-placeholder="Choose AI Astrologer">
+
+                                            <option value=""></option>
+
+                                            @foreach (\App\Models\AiAstrologer::where('status', 1)->orderBy('name')->get() as $astro)
+                                                <option value="{{ $astro->id }}">
+                                                    {{ $astro->name }}
+                                                    @if ($astro->slug)
+                                                        ({{ $astro->slug }})
+                                                    @endif
+                                                </option>
+                                            @endforeach
+
+                                        </select>
+                                    </div>
+
+                                    <div class="form-group mb-2">
+                                        <label class="fw-bold">Rating</label>
+
+                                        <select id="new_chat_review_rating" class="form-control select2-class"
+                                            data-placeholder="Choose Rating">
+
+                                            <option value=""></option>
+
+                                            <option value="1">1 Star</option>
+                                            <option value="2">2 Stars</option>
+                                            <option value="3">3 Stars</option>
+                                            <option value="4">4 Stars</option>
+                                            <option value="5">5 Stars</option>
+
+                                        </select>
+                                    </div>
+
+                                    <div class="form-group mb-2">
+                                        <label class="fw-bold">Review Message</label>
+
+                                        <textarea id="new_chat_review_text" class="form-control" rows="3" placeholder="Enter chat review"></textarea>
+                                    </div>
+
+                                    <button type="button" class="btn btn-success w-100" id="saveChatReviewBtn">
+                                        Save Review
+                                    </button>
+
+                                </div>
+
+
+                                <!-- EXISTING CHAT REVIEWS -->
+                                @forelse($user->aiAstrologerReviews as $review)
+                                    <div class="border rounded p-3 mb-3">
+
+                                        <input type="hidden" name="chat_reviews[{{ $review->id }}][id]"
+                                            value="{{ $review->id }}">
+
+                                        <!-- AI Astrologer -->
+                                        <div class="form-group mb-2">
+
+                                            <label class="fw-bold">
+                                                AI Astrologer :
+                                            </label>
+
+                                            <select name="chat_reviews[{{ $review->id }}][astrologer_id]"
+                                                class="form-control select2-class">
+
+                                                @foreach (\App\Models\AiAstrologer::where('status', 1)->orderBy('name')->get() as $astro)
+                                                    <option value="{{ $astro->id }}"
+                                                        {{ $review->astrologer_id == $astro->id ? 'selected' : '' }}>
+                                                        {{ $astro->name }}
+
+                                                        @if ($astro->slug)
+                                                            ({{ $astro->slug }})
+                                                        @endif
+
+                                                    </option>
+                                                @endforeach
+
+                                            </select>
+
+                                        </div>
+
+
+                                        <!-- Rating -->
+                                        <div class="form-group mb-2">
+
+                                            <label class="fw-bold">
+                                                Rating :
+                                            </label>
+
+                                            <select name="chat_reviews[{{ $review->id }}][rating]"
+                                                class="form-control select2-class">
+
+                                                @foreach (range(1, 5) as $i)
+                                                    <option value="{{ $i }}"
+                                                        {{ $review->rating == $i ? 'selected' : '' }}>
+                                                        {{ str_repeat('★', $i) }}
+                                                    </option>
+                                                @endforeach
+
+                                            </select>
+
+                                        </div>
+
+
+                                        <!-- Review -->
+                                        <div class="form-group mb-2">
+
+                                            <label class="fw-bold">
+                                                Review Message :
+                                            </label>
+
+                                            <textarea name="chat_reviews[{{ $review->id }}][review]" class="form-control" rows="3">{{ $review->review }}</textarea>
+
+                                        </div>
+
+
+                                        <!-- Active Status -->
+                                        <div class="form-check mt-2">
+
+                                            <input type="checkbox" class="form-check-input"
+                                                id="delete_chat_review_{{ $review->id }}"
+                                                name="chat_reviews[{{ $review->id }}][delete]" value="1">
+
+                                            <label class="form-check-label text-danger fw-bold"
+                                                for="delete_chat_review_{{ $review->id }}">
+                                                Delete this review
+                                            </label>
+
+                                        </div>
+
+                                    </div>
+
+                                @empty
+
+                                    <p class="text-muted">
+                                        No chat reviews yet.
+                                    </p>
+                                @endforelse
+
+                            </div>
                         </div>
 
                     </div>
@@ -406,17 +565,17 @@
                 }
 
                 let reviewHtml = `
-            <div class="border rounded p-3 mb-3">
+                    <div class="border rounded p-3 mb-3">
 
-                <input type="hidden" name="new_review_astrologer_id" value="${astro}">
-                <input type="hidden" name="new_review_rating" value="${rating}">
-                <input type="hidden" name="new_review_text" value="${text}">
+                        <input type="hidden" name="new_review_astrologer_id" value="${astro}">
+                        <input type="hidden" name="new_review_rating" value="${rating}">
+                        <input type="hidden" name="new_review_text" value="${text}">
 
-                <p><strong>Astrologer:</strong> ${$("#new_review_astro option:selected").text()}</p>
-                <p><strong>Rating:</strong> ${rating} Stars</p>
-                <p><strong>Review:</strong> ${text}</p>
-            </div>
-        `;
+                        <p><strong>Astrologer:</strong> ${$("#new_review_astro option:selected").text()}</p>
+                        <p><strong>Rating:</strong> ${rating} Stars</p>
+                        <p><strong>Review:</strong> ${text}</p>
+                    </div>
+                `;
 
                 $("#addReviewForm").after(reviewHtml);
 
@@ -456,6 +615,82 @@
                 });
             });
 
+        });
+    </script>
+    <script>
+        // =====================================================
+        // CHAT REVIEW
+        // =====================================================
+
+        $("#addChatReviewBtn").click(function() {
+            $("#addChatReviewForm").toggleClass("d-none");
+        });
+
+
+        $("#saveChatReviewBtn").click(function() {
+
+            let astro = $("#new_chat_review_astro").val();
+            let rating = $("#new_chat_review_rating").val();
+            let text = $("#new_chat_review_text").val();
+
+            if (!astro || !rating) {
+                showToastr('error', 'Select astrologer and rating');
+                return;
+            }
+
+            let reviewHtml = `
+                <div class="border rounded p-3 mb-3">
+
+                    <input
+                        type="hidden"
+                        name="new_chat_review_astrologer_id"
+                        value="${astro}"
+                    >
+
+                    <input
+                        type="hidden"
+                        name="new_chat_review_rating"
+                        value="${rating}"
+                    >
+
+                    <input
+                        type="hidden"
+                        name="new_chat_review_text"
+                        value="${text}"
+                    >
+
+                    <p>
+                        <strong>AI Astrologer:</strong>
+                        ${$("#new_chat_review_astro option:selected").text()}
+                    </p>
+
+                    <p>
+                        <strong>Rating:</strong>
+                        ${rating} Stars
+                    </p>
+
+                    <p>
+                        <strong>Review:</strong>
+                        ${text}
+                    </p>
+
+                </div>
+            `;
+
+            $("#addChatReviewForm").after(reviewHtml);
+
+            $("#new_chat_review_astro")
+                .val('')
+                .trigger("change");
+
+            $("#new_chat_review_rating")
+                .val('')
+                .trigger("change");
+
+            $("#new_chat_review_text")
+                .val('');
+
+            $("#addChatReviewForm").addClass("d-none");
         });
     </script>
     <script>
@@ -507,7 +742,7 @@
 
                 fetch(
                         `https://jagannatha-hora-359167915530.europe-west1.run.app/location/autocomplete?q=${encodeURIComponent(keyword)}`
-                        )
+                    )
                     .then(response => response.json())
                     .then(data => {
 
