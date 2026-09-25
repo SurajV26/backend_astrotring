@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Model;
 
 class AiAstrologer extends Model
@@ -30,5 +31,10 @@ class AiAstrologer extends Model
     public function expertises()
     {
         return $this->hasMany(AiAstrologerExpertise::class, 'ai_astrologer_id');
+    }
+
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(AstrologerReview::class, 'astrologer_id');
     }
 }
