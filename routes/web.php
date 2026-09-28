@@ -50,17 +50,89 @@ Route::namespace('App\Http\Controllers\Admin')
         // Secured Routes
         Route::middleware(['auth', 'employee'])
             ->group(function () {
+                // Route::prefix('dashboard')
+                //     ->name('dashboard.')
+                //     ->group(function () {
+                //         Route::get('/', 'DashboardController@getIndex')->name('index');
+                //         Route::get('/navigation', 'DashboardController@getNav')->name('navigation');
+                //         Route::get('/stats', 'DashboardController@getStats')->name('stats');
+                //         Route::get('/orders/graph', 'DashboardController@getOrdersGraph')->name('orders.graph');
+                //         Route::get('/graph/growth', 'DashboardController@getGrowthGraph')->name('graph.growth');
+                //         Route::get('/graph/engagement', 'DashboardController@getEngagementGraph')->name('graph.engagement');
+                //         Route::get('/login/requested', 'DashboardController@getLoginRequested')->name('login.requested');
+                //         Route::get('/login/request/status', 'DashboardController@getLoginRequestStatus')->name('login.request.status');
+                //     });
+
                 Route::prefix('dashboard')
                     ->name('dashboard.')
                     ->group(function () {
-                        Route::get('/', 'DashboardController@getIndex')->name('index');
-                        Route::get('/navigation', 'DashboardController@getNav')->name('navigation');
-                        Route::get('/stats', 'DashboardController@getStats')->name('stats');
-                        Route::get('/orders/graph', 'DashboardController@getOrdersGraph')->name('orders.graph');
-                        Route::get('/graph/growth', 'DashboardController@getGrowthGraph')->name('graph.growth');
-                        Route::get('/graph/engagement', 'DashboardController@getEngagementGraph')->name('graph.engagement');
-                        Route::get('/login/requested', 'DashboardController@getLoginRequested')->name('login.requested');
-                        Route::get('/login/request/status', 'DashboardController@getLoginRequestStatus')->name('login.request.status');
+
+                        Route::get('/', 'DashboardController@getIndex')
+                            ->name('index');
+
+                        Route::get('/navigation', 'DashboardController@getNav')
+                            ->name('navigation');
+
+                        Route::get('/stats', 'DashboardController@getStats')
+                            ->name('stats');
+
+                        Route::get('/orders/graph', 'DashboardController@getOrdersGraph')
+                            ->name('orders.graph');
+
+                        Route::get('/graph/growth', 'DashboardController@getGrowthGraph')
+                            ->name('graph.growth');
+
+                        Route::get('/graph/engagement', 'DashboardController@getEngagementGraph')
+                            ->name('graph.engagement');
+
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | AI CHAT DASHBOARD GRAPHS
+                        |--------------------------------------------------------------------------
+                        */
+
+                        Route::get(
+                            '/graph/expertise/users',
+                            'DashboardController@getExpertiseUsersGraph'
+                        )->name('graph.expertise.users');
+
+
+                        Route::get(
+                            '/graph/astrologer/users',
+                            'DashboardController@getAstrologerUsersGraph'
+                        )->name('graph.astrologer.users');
+
+
+                        Route::get(
+                            '/graph/astrologer/spend',
+                            'DashboardController@getAstrologerSpendGraph'
+                        )->name('graph.astrologer.spend');
+
+
+                        Route::get(
+                            '/graph/astrologer/reviews',
+                            'DashboardController@getAstrologerReviewsGraph'
+                        )->name('graph.astrologer.reviews');
+
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | LOGIN REQUEST
+                        |--------------------------------------------------------------------------
+                        */
+
+                        Route::get(
+                            '/login/requested',
+                            'DashboardController@getLoginRequested'
+                        )->name('login.requested');
+
+
+                        Route::get(
+                            '/login/request/status',
+                            'DashboardController@getLoginRequestStatus'
+                        )->name('login.request.status');
+
                     });
 
                 Route::prefix('profile')
