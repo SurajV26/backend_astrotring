@@ -390,6 +390,7 @@ Route::namespace('App\Http\Controllers\Admin')
                         Route::get('delete/{id?}', 'UserController@getDelete')->name('delete');
                         Route::get('change/status/{id?}', 'UserController@getChangeStatus')->name('change.status');
                         Route::get('view/{id?}', 'UserController@getView')->name('view');
+                        Route::get('export', 'UserController@export')->name('export');
                     });
 
                 Route::prefix('interactions')
