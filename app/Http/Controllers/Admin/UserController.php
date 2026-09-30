@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\AdminController;
+use App\Exports\UsersExport;
+use Maatwebsite\Excel\Facades\Excel;
 use App\Models\User;
 use App\Models\Wallet;
 use App\Models\WalletTransaction;
@@ -29,22 +31,75 @@ class UserController extends AdminController
         return view('admin.users.index');
     }
 
+    // public function getList(Request $request)
+    // {
+    //     $list = User::where("type", "user")
+    //         ->when($request->user_id !== null && $request->user_id !== "", fn($q) => $q->where("id", $request->user_id))
+    //         ->when($request->status !== null && $request->status !== "", fn($q) => $q->where("status", $request->status))
+    //         ->orderByDesc("id");
+
+    //     return \DataTables::of($list)
+    //         ->addColumn('code_name', function ($row) {
+    //             return '[ <b>'.e($row->code).'</b> ]<br>'.e($row->name);
+    //         })
+    //         ->addColumn("wallet", function ($u) {
+    //             $wallet = $u->wallet->balance ?? 0;
+    //             return "₹ " . number_format($wallet, 2);
+    //         })
+    //         ->rawColumns(["code_name", "wallet"])
+    //         ->make(true);
+    // }
     public function getList(Request $request)
     {
-        $list = User::where("type", "user")
-            ->when($request->user_id !== null && $request->user_id !== "", fn($q) => $q->where("id", $request->user_id))
-            ->when($request->status !== null && $request->status !== "", fn($q) => $q->where("status", $request->status))
-            ->orderByDesc("id");
+        $list = User::where('type', 'user')
+
+            ->when(
+                $request->user_id !== null && $request->user_id !== '',
+                fn($q) => $q->where('id', $request->user_id)
+            )
+
+            ->when(
+                $request->status !== null && $request->status !== '',
+                fn($q) => $q->where('status', $request->status)
+            )
+
+            ->when(
+                $request->from_date !== null && $request->from_date !== '',
+                fn($q) => $q->whereDate(
+                    'date_of_joining',
+                    '>=',
+                    $request->from_date
+                )
+            )
+
+            ->when(
+                $request->to_date !== null && $request->to_date !== '',
+                fn($q) => $q->whereDate(
+                    'date_of_joining',
+                    '<=',
+                    $request->to_date
+                )
+            )
+
+            ->orderByDesc('id');
 
         return \DataTables::of($list)
+
             ->addColumn('code_name', function ($row) {
-                return '[ <b>'.e($row->code).'</b> ]<br>'.e($row->name);
+                return '[ <b>' . e($row->code) . '</b> ]<br>' . e($row->name);
             })
-            ->addColumn("wallet", function ($u) {
+
+            ->addColumn('wallet', function ($u) {
                 $wallet = $u->wallet->balance ?? 0;
-                return "₹ " . number_format($wallet, 2);
+
+                return '₹ ' . number_format($wallet, 2);
             })
-            ->rawColumns(["code_name", "wallet"])
+
+            ->rawColumns([
+                'code_name',
+                'wallet'
+            ])
+
             ->make(true);
     }
 
@@ -828,5 +883,42 @@ class UserController extends AdminController
             "rating"       => $avg,
             "rating_count" => $count
         ]);
+    }
+
+    public function export(Request $request)
+    {
+        $request->validate([
+            'from_date' => ['nullable', 'date'],
+            'to_date'   => ['nullable', 'date', 'after_or_equal:from_date'],
+            'user_id'   => ['nullable', 'exists:users,id'],
+            'status'    => ['nullable', 'in:0,1'],
+        ]);
+
+        $fromDate = $request->from_date;
+        $toDate   = $request->to_date;
+        $userId   = $request->user_id;
+        $status   = $request->status;
+
+        $fileName = 'users';
+
+        if ($fromDate && $toDate) {
+            $fileName .= "_{$fromDate}_to_{$toDate}";
+        } elseif ($fromDate) {
+            $fileName .= "_from_{$fromDate}";
+        } elseif ($toDate) {
+            $fileName .= "_up_to_{$toDate}";
+        }
+
+        $fileName .= '.xlsx';
+
+        return Excel::download(
+            new UsersExport(
+                $fromDate,
+                $toDate,
+                $userId,
+                $status
+            ),
+            $fileName
+        );
     }
 }
