@@ -2903,7 +2903,42 @@ class AiChatApiController extends Controller
 
     private function sharedGuardrailRules(AiChatSession $session): string
     {
+
+        $currentDateTime = now();
+
+        $currentDate = $currentDateTime->format('d F Y');
+        $currentMonth = $currentDateTime->format('F');
+        $currentYear = $currentDateTime->format('Y');
+        $currentTime = $currentDateTime->format('h:i A');
+        $currentTimezone = $currentDateTime->timezoneName;
+
         return <<<'RULES'
+
+        ==================================================
+        CURRENT DATE / CURRENT TIME
+        ==================================================
+
+        - Current date: {$currentDate}
+        - Current month: {$currentMonth}
+        - Current year: {$currentYear}
+        - Current time: {$currentTime}
+        - Current timezone: {$currentTimezone}
+
+        - Treat the above as the actual current date and time for this conversation.
+        - When the user says "today", "now", "abhi", "this month", "this year",
+        "next month", "next year", "recently", etc., interpret it relative
+        to the current date/time above.
+
+        - Never confuse the user's DOB/birth year with the current date/year.
+        - Never treat a past year/month as current.
+        - If the user asks for a future period, it must be future relative to
+        the current date above.
+        - If the user asks about the current time, use the current time above.
+
+        - IMPORTANT:
+        Current real-world date/time is separate from the user's birth
+        date, birth time and birth-place timezone.
+        - Use the user's birth timezone only for horoscope/astrology calculations.
 
         IDENTITY
         - Speak naturally like an experienced Indian astrologer.
