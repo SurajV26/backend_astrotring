@@ -26,19 +26,19 @@ class DashboardController extends AdminController
     {
         return response()->json([
 
-            /*
+            /**
              * Total Astrologers
              */
             'total_astrologers' => User::where('type', 'astro')
                 ->count(),
 
-            /*
+            /**
              * Total Users
              */
             'total_users' => User::where('type', 'user')
                 ->count(),
 
-            /*
+            /**
              * Online Astrologers
              */
             'online_astrologers' => User::where('type', 'astro')
@@ -46,7 +46,7 @@ class DashboardController extends AdminController
                 ->whereDate('updated_at', now()->toDateString())
                 ->count(),
 
-            /*
+            /**
              * Online Users
              */
             'online_users' => User::where('type', 'user')
@@ -54,14 +54,14 @@ class DashboardController extends AdminController
                 ->whereDate('updated_at', now()->toDateString())
                 ->count(),
 
-            /*
+            /**
              * Active Calls
              */
             'active_call_connections' => DB::table('call_sessions')
                 ->where('status', 'active')
                 ->count(),
 
-            /*
+            /**
              * Active AI Chats
              */
             'active_chat_connections' => DB::table('ai_chat_sessions')
@@ -89,7 +89,7 @@ class DashboardController extends AdminController
         $dates = $this->getDaysBetweenDates($start, $end);
 
 
-        /*
+        /**
          * Astrologers registered per day
          */
         $astro = User::selectRaw(
@@ -102,7 +102,7 @@ class DashboardController extends AdminController
             ->toArray();
 
 
-        /*
+        /**
          * Users registered per day
          */
         $users = User::selectRaw(
@@ -144,6 +144,10 @@ class DashboardController extends AdminController
      * USER CONNECTIONS
      *
      * Daily calls and AI chat sessions.
+     *
+     * IMPORTANT:
+     * AI chats are counted based on actual user messages,
+     * not session creation date.
      */
     public function getEngagementGraph(Request $request)
     {
@@ -156,7 +160,7 @@ class DashboardController extends AdminController
         $dates = $this->getDaysBetweenDates($start, $end);
 
 
-        /*
+        /**
          * Calls
          */
         $calls = DB::table('call_sessions')
@@ -169,15 +173,36 @@ class DashboardController extends AdminController
             ->toArray();
 
 
-        /*
+        /**
          * AI Chat Sessions
+         *
+         * Count only sessions in which a USER actually sent
+         * at least one message during the selected date range.
+         *
+         * This fixes the case where:
+         *
+         * session created = yesterday
+         * user chatted = today
+         *
+         * In that case today's graph will still show the chat.
          */
-        $chats = DB::table('ai_chat_sessions')
-            ->selectRaw(
-                'DATE(created_at) as date, COUNT(id) as total'
+        $chats = DB::table('ai_chat_messages as messages')
+            ->join(
+                'ai_chat_sessions as sessions',
+                'messages.session_id',
+                '=',
+                'sessions.id'
             )
-            ->whereBetween('created_at', [$start, $end])
-            ->groupByRaw('DATE(created_at)')
+            ->where('messages.sender', 'user')
+            ->whereBetween(
+                'messages.created_at',
+                [$start, $end]
+            )
+            ->selectRaw(
+                'DATE(messages.created_at) as date,
+                COUNT(DISTINCT messages.session_id) as total'
+            )
+            ->groupByRaw('DATE(messages.created_at)')
             ->pluck('total', 'date')
             ->toArray();
 
@@ -210,16 +235,8 @@ class DashboardController extends AdminController
      *
      * USERS BY EXPERTISE
      *
-     * Unique users for each expertise.
-     *
-     * Example:
-     *
-     * Love       -> 65 users
-     * Career     -> 32 users
-     * Marriage   -> 20 users
-     *
-     * Same user with multiple sessions under the same
-     * expertise is counted only once.
+     * Unique users who actually sent a chat message
+     * during the selected date range.
      */
     public function getExpertiseUsersGraph(Request $request)
     {
@@ -230,15 +247,22 @@ class DashboardController extends AdminController
             ->endOfDay();
 
 
-        $data = DB::table('ai_chat_sessions as sessions')
+        $data = DB::table('ai_chat_messages as messages')
+            ->join(
+                'ai_chat_sessions as sessions',
+                'messages.session_id',
+                '=',
+                'sessions.id'
+            )
             ->join(
                 'ai_astrologer_expertises as expertises',
                 'sessions.expertise_id',
                 '=',
                 'expertises.id'
             )
+            ->where('messages.sender', 'user')
             ->whereBetween(
-                'sessions.created_at',
+                'messages.created_at',
                 [$start, $end]
             )
             ->select(
@@ -268,10 +292,8 @@ class DashboardController extends AdminController
      *
      * USERS BY ASTROLOGER
      *
-     * Unique users for each AI astrologer.
-     *
-     * Same user talking multiple times with the same
-     * astrologer is counted only once.
+     * Unique users who actually chatted with each AI astrologer
+     * during the selected date range.
      */
     public function getAstrologerUsersGraph(Request $request)
     {
@@ -282,15 +304,22 @@ class DashboardController extends AdminController
             ->endOfDay();
 
 
-        $data = DB::table('ai_chat_sessions as sessions')
+        $data = DB::table('ai_chat_messages as messages')
+            ->join(
+                'ai_chat_sessions as sessions',
+                'messages.session_id',
+                '=',
+                'sessions.id'
+            )
             ->join(
                 'ai_astrologers as astrologers',
                 'sessions.astrologer_id',
                 '=',
                 'astrologers.id'
             )
+            ->where('messages.sender', 'user')
             ->whereBetween(
-                'sessions.created_at',
+                'messages.created_at',
                 [$start, $end]
             )
             ->select(
@@ -439,9 +468,11 @@ class DashboardController extends AdminController
     private function getDaysBetweenDates($start, $end)
     {
         $start = Carbon::parse($start);
+
         $end = Carbon::parse($end);
 
         $dates = [];
+
 
         while ($start->lte($end)) {
 
@@ -449,6 +480,7 @@ class DashboardController extends AdminController
 
             $start->addDay();
         }
+
 
         return $dates;
     }
