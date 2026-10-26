@@ -19,6 +19,7 @@ return new class extends Migration
             $table->enum('sender', ['user', 'assistant']);
             $table->longText('message');
             $table->boolean('is_free')->default(false);
+            $table->boolean('question_credit_used')->default(false);
             $table->decimal('charged_amount', 10, 2) ->default(0);
             $table->string('model')->nullable();
             $table->integer('tokens_used')->default(0);

@@ -16,6 +16,7 @@ return new class extends Migration
 
             $table->string('name');
             $table->string('slug')->unique();
+            $table->enum('gender', ['male', 'female', 'other'])->nullable();
 
             $table->string('image')->nullable();
 

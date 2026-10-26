@@ -25,7 +25,7 @@ class CreateDefaultAdminSeeder extends Seeder
             'username' => 'super_admin',
             'name' => 'Super Admin',
             'email' => 'super-admin@demo.com',
-            'password' => bcrypt('111111'),
+            'password' => bcrypt('711009'),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -37,7 +37,7 @@ class CreateDefaultAdminSeeder extends Seeder
             'username' => 'employee_user',
             'name' => 'Employee User',
             'email' => 'employee@demo.com',
-            'password' => bcrypt('111111'),
+            'password' => bcrypt('711009'),
             'created_at' => now(),
             'updated_at' => now(),
         ]);

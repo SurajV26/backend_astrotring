@@ -208,6 +208,26 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
             Route::delete('astrologer/review/{id}', [AiAstrologerReviewController::class, 'destroy']);
 
+            Route::get('ai-question-packs', [
+                RazorpayPaymentController::class,
+                'questionPacks'
+            ]);
+
+            Route::get('ai-question-packs/balance', [
+                RazorpayPaymentController::class,
+                'questionBalance'
+            ]);
+
+            Route::post('ai-question-packs/create-order', [
+                RazorpayPaymentController::class,
+                'createQuestionPackOrder'
+            ]);
+
+            Route::post('ai-question-packs/verify-payment', [
+                RazorpayPaymentController::class,
+                'verify'
+            ]);
+
 
             /*
             |--------------------------------------------------------------------------
