@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 class AiChatMessage extends Model
 {
     use HasFactory;
-    
+
     protected $table = 'ai_chat_messages';
 
     protected $fillable = [
@@ -17,13 +17,15 @@ class AiChatMessage extends Model
         'sender',
         'message',
         'is_free',
+        'question_credit_used',
         'charged_amount',
         'model',
-        'tokens_used'
+        'tokens_used',
     ];
 
     protected $casts = [
         'is_free' => 'boolean',
+        'question_credit_used' => 'boolean',
         'charged_amount' => 'decimal:2',
         'tokens_used' => 'integer',
     ];
@@ -40,6 +42,9 @@ class AiChatMessage extends Model
 
     public function question()
     {
-        return $this->belongsTo(AiAstrologerExpertiseQuestion::class, 'question_id');
+        return $this->belongsTo(
+            AiAstrologerExpertiseQuestion::class,
+            'question_id'
+        );
     }
 }
