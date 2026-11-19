@@ -429,7 +429,7 @@ class UserApiController extends Controller
 
                     'last_recharge_amount' => (float) ($user->wallet->last_recharge_amount ?? 0),
 
-                    'last_recharge_at' => $user->wallet->last_recharge_at,
+                    'last_recharge_at' => $user->wallet->last_recharge_at ?? null,
 
                 ],
 
