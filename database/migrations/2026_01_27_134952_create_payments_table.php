@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
 
             $table->unsignedBigInteger('user_id');
-            $table->enum('platform', ['astrotring', 'astrotring_store']);
+            $table->enum('platform', ['astrotring', 'astrotring_store', 'usastro_subscription'])->default('usastro_subscription');
             $table->string('order_id')->nullable()->index();
             // $table->string('payment_gateway')->default('razorpay');
             $table->enum('payment_gateway', ['razorpay', 'sbi']);

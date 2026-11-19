@@ -22,6 +22,8 @@ return new class extends Migration
 
             $table->string('slug')->unique();
 
+            $table->json('relevant_chart')->nullable();
+
             $table->boolean('status')->default(true);
 
             $table->timestamps();
