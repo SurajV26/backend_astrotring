@@ -441,6 +441,34 @@ Route::namespace('App\Http\Controllers\Admin')
                         Route::get('view/{id?}', 'BlogController@getView')->name('view');
                     });
 
+                Route::prefix('policy_categories')
+                    ->name('policy_categories.')
+                    ->group(function () {
+                        Route::get('/', 'PolicyCategoryController@getIndex')->name('index');
+                        Route::get('list', 'PolicyCategoryController@getList')->name('list');
+                        Route::get('create', 'PolicyCategoryController@getCreate')->name('create.index');
+                        Route::post('create', 'PolicyCategoryController@postCreate')->name('create');
+                        Route::get('update/{id?}', 'PolicyCategoryController@getUpdate')->name('update.index');
+                        Route::post('update/{id?}', 'PolicyCategoryController@postUpdate')->name('update');
+                        Route::get('delete/{id?}', 'PolicyCategoryController@getDelete')->name('delete');
+                        Route::get('change/status/{id?}', 'PolicyCategoryController@getChangeStatus')->name('change.status');
+                        Route::get('view/{id?}', 'PolicyCategoryController@getView')->name('view');
+                    });
+
+                Route::prefix('policies')
+                    ->name('policies.')
+                    ->group(function () {
+                        Route::get('/', 'PolicyController@getIndex')->name('index');
+                        Route::get('list', 'PolicyController@getList')->name('list');
+                        Route::get('create', 'PolicyController@getCreate')->name('create.index');
+                        Route::post('create', 'PolicyController@postCreate')->name('create');
+                        Route::get('update/{id?}', 'PolicyController@getUpdate')->name('update.index');
+                        Route::post('update/{id?}', 'PolicyController@postUpdate')->name('update');
+                        Route::get('delete/{id?}', 'PolicyController@getDelete')->name('delete');
+                        Route::get('change/status/{id?}', 'PolicyController@getChangeStatus')->name('change.status');
+                        Route::get('view/{id?}', 'PolicyController@getView')->name('view');
+                    });
+
                 /*  
                 |--------------------------------------------------------------------------
                 | Astro Store routes

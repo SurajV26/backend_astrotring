@@ -41,6 +41,8 @@
             ['key' => 'blogs', 'label' => 'Blogs', 'icon' => 'fas fa-blog'],
             ['key' => 'astro_banners', 'label' => 'Astro Banner', 'icon' => 'fas fa-image'],
             ['key' => 'send_mail', 'label' => 'Send Mail', 'icon' => 'fas fa-envelope'],
+            ['key' => 'policy_categories', 'label' => 'Policy Categories', 'icon' => 'fas fa-layer-group'],
+            ['key' => 'policies', 'label' => 'Policies', 'icon' => 'fas fa-blog'],
             ];
             @endphp
 
