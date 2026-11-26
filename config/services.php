@@ -60,7 +60,7 @@ return [
     ],
 
     'jhora' => [
-        'base_url' => env('JHORA_BASE_URL'),
+        'base_url' => env('JHORA_BASE_URL', 'https://jagannatha-hora-359167915530.europe-west1.run.app'),
     ],
 
 ];
