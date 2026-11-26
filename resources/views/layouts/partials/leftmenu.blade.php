@@ -32,7 +32,7 @@ $user = auth()->user();
                     </a>
                 </li>
 
-                <li class="menu-title">HOROSCOPE</li>
+                {{-- <li class="menu-title">HOROSCOPE</li>
 
                 <li>
                     <a href="{{ route('admin.zodiac_signs.index') }}">
@@ -46,7 +46,7 @@ $user = auth()->user();
                         <i class="bx bx-star"></i>
                         <span>Horoscope</span>
                     </a>
-                </li>
+                </li> --}}
 
                 <li class="menu-title">USERS</li>
                 <li>
@@ -131,7 +131,7 @@ $user = auth()->user();
                 @endif
 
                 {{-- HOROSCOPE --}}
-                @if($user->hasAccess('zodiac_signs') || $user->hasAccess('horoscopes'))
+                {{-- @if($user->hasAccess('zodiac_signs') || $user->hasAccess('horoscopes'))
                 <li class="menu-title">HOROSCOPE MAINTENANCE</li>
                 @endif
 
@@ -142,16 +142,16 @@ $user = auth()->user();
                         <span>Zodiac Signs</span>
                     </a>
                 </li>
-                @endif
+                @endif --}}
 
-                @if($user->hasAccess('horoscopes'))
+                {{-- @if($user->hasAccess('horoscopes'))
                 <li>
                     <a href="{{ route('admin.horoscopes.index') }}">
                         <i class="bx bx-star"></i>
                         <span>Horoscope</span>
                     </a>
                 </li>
-                @endif
+                @endif --}}
 
                 {{-- USERS --}}
                 @if($user->hasAccess('astrologers') || $user->hasAccess('users') || $user->hasAccess('payouts'))
